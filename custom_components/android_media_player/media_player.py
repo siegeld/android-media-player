@@ -75,6 +75,12 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         )
         self._remove_listener: callable | None = None
 
+        # Queue management
+        self._queue: list[dict] = []  # List of {url, title, artist}
+        self._queue_index: int = 0
+        self._previous_state: str | None = None
+        self._user_stopped: bool = False
+
         _LOGGER.debug(
             "Initialized AndroidMediaPlayerEntity: unique_id=%s, name=%s",
             self._attr_unique_id, self._device_name
@@ -92,6 +98,8 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
             | MediaPlayerEntityFeature.PLAY_MEDIA
             | MediaPlayerEntityFeature.BROWSE_MEDIA
             | MediaPlayerEntityFeature.SEEK
+            | MediaPlayerEntityFeature.NEXT_TRACK
+            | MediaPlayerEntityFeature.PREVIOUS_TRACK
         )
 
     @property
@@ -171,17 +179,6 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         if self._remove_listener:
             self._remove_listener()
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        _LOGGER.debug(
-            "Entity '%s' received coordinator update: available=%s, state=%s",
-            self._device_name,
-            self.coordinator.available,
-            self.coordinator.state.get("state")
-        )
-        self.async_write_ha_state()
-
     async def async_media_play(self) -> None:
         """Send play command."""
         _LOGGER.debug("async_media_play called for '%s'", self._device_name)
@@ -199,6 +196,9 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
     async def async_media_stop(self) -> None:
         """Send stop command."""
         _LOGGER.debug("async_media_stop called for '%s'", self._device_name)
+        self._user_stopped = True
+        self._queue = []
+        self._queue_index = 0
         result = await self.coordinator.async_send_command("stop")
         if not result:
             _LOGGER.warning("Failed to send stop command to '%s'", self._device_name)
@@ -247,44 +247,113 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         self, media_type: MediaType | str, media_id: str, **kwargs: Any
     ) -> None:
         """Play a piece of media."""
-        title = kwargs.get("enqueue") or kwargs.get("extra", {}).get("title")
-        artist = kwargs.get("extra", {}).get("artist")
+        # Log all kwargs for debugging
+        _LOGGER.debug("async_play_media kwargs: %s", kwargs)
 
+        # Extract metadata from various possible locations
+        extra = kwargs.get("extra", {})
+        title = extra.get("title")
+        artist = extra.get("artist")
+
+        # Check enqueue mode
+        enqueue = kwargs.get("enqueue")
         _LOGGER.info(
-            "async_play_media called for '%s': type=%s, media_id=%s, title=%s, artist=%s",
-            self._device_name, media_type, media_id, title, artist
+            "async_play_media for '%s': type=%s, media_id=%s, enqueue=%s",
+            self._device_name, media_type, media_id, enqueue
         )
 
         # Resolve media_source URIs to actual URLs
+        resolved_url = media_id
         if media_source.is_media_source_id(media_id):
             _LOGGER.debug("Resolving media_source URI: %s", media_id)
             try:
                 sourced_media = await media_source.async_resolve_media(
                     self.hass, media_id, self.entity_id
                 )
-                media_id = sourced_media.url
-                # Use the mime_type as a hint if no title provided
-                if not title and hasattr(sourced_media, 'mime_type'):
-                    _LOGGER.debug("Resolved to URL: %s (mime: %s)", media_id, sourced_media.mime_type)
+                resolved_url = sourced_media.url
+                _LOGGER.debug("Resolved to URL: %s", resolved_url)
             except media_source.Unresolvable as err:
                 _LOGGER.error("Cannot resolve media_source URI %s: %s", media_id, err)
                 return
 
-        # Process URL to ensure it's playable (handles local file paths, etc.)
-        media_id = async_process_play_media_url(self.hass, media_id)
+        # Try to extract title from the original media_id if not provided
+        if not title:
+            # media_id often contains path info like "media-source://media_source/local/Music/Artist/Album/Track.mp3"
+            from urllib.parse import urlparse, unquote
+            parsed_id = urlparse(media_id)
+            if parsed_id.path:
+                path_parts = [unquote(p) for p in parsed_id.path.split("/") if p]
+                if path_parts:
+                    filename = path_parts[-1]
+                    # Remove common extensions
+                    for ext in [".mp3", ".m4a", ".flac", ".wav", ".ogg", ".aac", ".opus"]:
+                        if filename.lower().endswith(ext):
+                            filename = filename[:-len(ext)]
+                            break
+                    if filename and filename not in ("file", "object"):
+                        title = filename
+                    # Try to get artist from parent folder
+                    if not artist and len(path_parts) >= 2:
+                        potential_artist = path_parts[-2]
+                        # Skip generic folder names
+                        if potential_artist.lower() not in ("music", "media", "audio", "local"):
+                            artist = potential_artist
 
-        _LOGGER.info("Playing URL on '%s': %s", self._device_name, media_id)
+        # Also try extracting from the resolved URL
+        if not title or title in ("file", "object"):
+            from urllib.parse import urlparse, unquote
+            parsed = urlparse(resolved_url)
+            if parsed.path:
+                filename = unquote(parsed.path.split("/")[-1])
+                for ext in [".mp3", ".m4a", ".flac", ".wav", ".ogg", ".aac", ".opus"]:
+                    if filename.lower().endswith(ext):
+                        filename = filename[:-len(ext)]
+                        break
+                if filename and filename not in ("file", "object"):
+                    title = filename
+
+        # Process URL to ensure it's playable
+        resolved_url = async_process_play_media_url(self.hass, resolved_url)
+
+        # Create queue item
+        queue_item = {"url": resolved_url, "title": title, "artist": artist}
+
+        # Handle enqueue modes
+        if enqueue == "add":
+            # Add to end of queue
+            self._queue.append(queue_item)
+            _LOGGER.info("Added to queue: %s (queue size: %d)", title, len(self._queue))
+            return
+        elif enqueue == "next":
+            # Add after current track
+            insert_pos = self._queue_index + 1
+            self._queue.insert(insert_pos, queue_item)
+            _LOGGER.info("Inserted at position %d: %s", insert_pos, title)
+            return
+        elif enqueue == "replace":
+            # Clear queue and play
+            self._queue = [queue_item]
+            self._queue_index = 0
+        else:
+            # Default: clear queue and play immediately
+            self._queue = [queue_item]
+            self._queue_index = 0
+
+        _LOGGER.info(
+            "Playing on '%s': url=%s, title=%s, artist=%s",
+            self._device_name, resolved_url, title, artist
+        )
 
         result = await self.coordinator.async_send_command(
             "play",
-            url=media_id,
+            url=resolved_url,
             title=title,
             artist=artist,
         )
         if not result:
             _LOGGER.warning(
                 "Failed to play media on '%s': url=%s",
-                self._device_name, media_id
+                self._device_name, resolved_url
             )
 
     async def async_browse_media(
@@ -320,3 +389,67 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
                 exc_info=True
             )
             raise
+
+    async def async_media_next_track(self) -> None:
+        """Play the next track in the queue."""
+        if not self._queue or self._queue_index >= len(self._queue) - 1:
+            _LOGGER.debug("No next track available (index=%d, queue size=%d)",
+                         self._queue_index, len(self._queue))
+            return
+
+        self._queue_index += 1
+        track = self._queue[self._queue_index]
+        _LOGGER.info("Playing next track %d/%d: %s",
+                    self._queue_index + 1, len(self._queue), track.get("title"))
+
+        await self.coordinator.async_send_command(
+            "play",
+            url=track["url"],
+            title=track.get("title"),
+            artist=track.get("artist"),
+        )
+
+    async def async_media_previous_track(self) -> None:
+        """Play the previous track in the queue."""
+        if not self._queue or self._queue_index <= 0:
+            _LOGGER.debug("No previous track available (index=%d)", self._queue_index)
+            return
+
+        self._queue_index -= 1
+        track = self._queue[self._queue_index]
+        _LOGGER.info("Playing previous track %d/%d: %s",
+                    self._queue_index + 1, len(self._queue), track.get("title"))
+
+        await self.coordinator.async_send_command(
+            "play",
+            url=track["url"],
+            title=track.get("title"),
+            artist=track.get("artist"),
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        state = self.coordinator.state.get("state")
+        _LOGGER.debug(
+            "Entity '%s' update: state=%s (prev=%s), queue=%d/%d, user_stopped=%s",
+            self._device_name, state, self._previous_state,
+            self._queue_index + 1, len(self._queue), self._user_stopped
+        )
+
+        # Auto-advance to next track when track ends naturally
+        # Only if: was playing -> now idle, user didn't stop, and more tracks in queue
+        if (state == "idle" and
+            self._previous_state == "playing" and
+            not self._user_stopped and
+            self._queue and
+            self._queue_index < len(self._queue) - 1):
+            _LOGGER.info("Track ended naturally, advancing to next track...")
+            self.hass.async_create_task(self.async_media_next_track())
+
+        # Reset user_stopped flag when playback starts
+        if state == "playing":
+            self._user_stopped = False
+
+        self._previous_state = state
+        self.async_write_ha_state()

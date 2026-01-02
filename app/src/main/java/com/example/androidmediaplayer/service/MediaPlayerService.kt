@@ -11,9 +11,11 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Metadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.extractor.metadata.icy.IcyInfo
 import com.example.androidmediaplayer.MainActivity
 import com.example.androidmediaplayer.MediaPlayerApp
 import com.example.androidmediaplayer.R
@@ -120,11 +122,43 @@ class MediaPlayerService : Service() {
                 }
 
                 override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                    Log.d(TAG, "Media metadata changed: title=${mediaMetadata.title}, artist=${mediaMetadata.artist}")
-                    currentTitle = mediaMetadata.title?.toString() ?: currentTitle
-                    currentArtist = mediaMetadata.artist?.toString() ?: currentArtist
+                    Log.d(TAG, "Media metadata changed: title=${mediaMetadata.title}, artist=${mediaMetadata.artist}, displayTitle=${mediaMetadata.displayTitle}")
+                    // Try different metadata fields
+                    val newTitle = mediaMetadata.title?.toString()
+                        ?: mediaMetadata.displayTitle?.toString()
+                        ?: mediaMetadata.albumTitle?.toString()
+                    val newArtist = mediaMetadata.artist?.toString()
+                        ?: mediaMetadata.albumArtist?.toString()
+
+                    if (newTitle != null) currentTitle = newTitle
+                    if (newArtist != null) currentArtist = newArtist
+
                     updatePlayerState()
                     updateNotification()
+                }
+
+                override fun onMetadata(metadata: Metadata) {
+                    // Handle ICY metadata from internet radio streams
+                    Log.d(TAG, "onMetadata: ${metadata.length()} entries")
+                    for (i in 0 until metadata.length()) {
+                        val entry = metadata.get(i)
+                        Log.d(TAG, "Metadata entry $i: ${entry::class.simpleName} = $entry")
+                        if (entry is IcyInfo) {
+                            Log.i(TAG, "ICY metadata: title=${entry.title}, url=${entry.url}")
+                            entry.title?.let { icyTitle ->
+                                // ICY title often has format "Artist - Title"
+                                if (icyTitle.contains(" - ")) {
+                                    val parts = icyTitle.split(" - ", limit = 2)
+                                    currentArtist = parts[0].trim()
+                                    currentTitle = parts[1].trim()
+                                } else {
+                                    currentTitle = icyTitle
+                                }
+                                updatePlayerState()
+                                updateNotification()
+                            }
+                        }
+                    }
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
