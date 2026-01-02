@@ -1,0 +1,25 @@
+# Build outputs
+app/build/
+build/
+*.apk
+
+# Local SDK and JDK (downloaded by build.sh)
+android-sdk/
+jdk-local/
+gradle-local/
+
+# Gradle
+.gradle/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc

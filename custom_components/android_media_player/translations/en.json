@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Android Media Player",
+        "description": "Enter the IP address and port of your Android device running the Media Player app.",
+        "data": {
+          "host": "IP Address",
+          "port": "Port",
+          "name": "Device Name"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to device. Please check the IP address and port.",
+      "unknown": "An unknown error occurred."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Android Media Player",
+        "data": {
+          "name": "Device Name"
+        }
+      }
+    }
+  }
+}
