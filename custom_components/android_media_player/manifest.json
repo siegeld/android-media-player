@@ -3,7 +3,7 @@
   "name": "Android Media Player",
   "codeowners": [],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["media_source"],
   "documentation": "https://github.com/your-repo/android-media-player",
   "iot_class": "local_push",
   "requirements": ["aiohttp>=3.8.0", "websockets>=10.0"],

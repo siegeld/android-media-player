@@ -11,6 +11,8 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
     MediaType,
 )
+from homeassistant.components.media_player.browse_media import async_process_play_media_url
+from homeassistant.components import media_source
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -249,9 +251,29 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         artist = kwargs.get("extra", {}).get("artist")
 
         _LOGGER.info(
-            "async_play_media called for '%s': type=%s, url=%s, title=%s, artist=%s",
+            "async_play_media called for '%s': type=%s, media_id=%s, title=%s, artist=%s",
             self._device_name, media_type, media_id, title, artist
         )
+
+        # Resolve media_source URIs to actual URLs
+        if media_source.is_media_source_id(media_id):
+            _LOGGER.debug("Resolving media_source URI: %s", media_id)
+            try:
+                sourced_media = await media_source.async_resolve_media(
+                    self.hass, media_id, self.entity_id
+                )
+                media_id = sourced_media.url
+                # Use the mime_type as a hint if no title provided
+                if not title and hasattr(sourced_media, 'mime_type'):
+                    _LOGGER.debug("Resolved to URL: %s (mime: %s)", media_id, sourced_media.mime_type)
+            except media_source.Unresolvable as err:
+                _LOGGER.error("Cannot resolve media_source URI %s: %s", media_id, err)
+                return
+
+        # Process URL to ensure it's playable (handles local file paths, etc.)
+        media_id = async_process_play_media_url(self.hass, media_id)
+
+        _LOGGER.info("Playing URL on '%s': %s", self._device_name, media_id)
 
         result = await self.coordinator.async_send_command(
             "play",
@@ -280,7 +302,7 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         )
 
         try:
-            result = await self.hass.components.media_source.async_browse_media(
+            result = await media_source.async_browse_media(
                 self.hass,
                 media_content_id,
                 content_filter=lambda item: item.media_content_type.startswith("audio/"),
