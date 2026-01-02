@@ -276,6 +276,16 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
                 _LOGGER.error("Cannot resolve media_source URI %s: %s", media_id, err)
                 return
 
+        # Helper to check if string looks like a hash/ID (skip these for metadata)
+        def _is_hash_like(s: str) -> bool:
+            if not s or len(s) < 8:
+                return False
+            # Skip if mostly hex chars or alphanumeric without spaces
+            clean = s.replace("-", "").replace("_", "")
+            if len(clean) > 16 and clean.isalnum() and not any(c.isspace() for c in s):
+                return True
+            return False
+
         # Try to extract title from the original media_id if not provided
         if not title:
             # media_id often contains path info like "media-source://media_source/local/Music/Artist/Album/Track.mp3"
@@ -290,27 +300,19 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
                         if filename.lower().endswith(ext):
                             filename = filename[:-len(ext)]
                             break
-                    if filename and filename not in ("file", "object"):
+                    # Skip generic names and hash-like IDs
+                    if filename and filename not in ("file", "object") and not _is_hash_like(filename):
                         title = filename
                     # Try to get artist from parent folder
                     if not artist and len(path_parts) >= 2:
                         potential_artist = path_parts[-2]
-                        # Skip generic folder names
-                        if potential_artist.lower() not in ("music", "media", "audio", "local"):
+                        # Skip generic folder names and hash-like IDs
+                        if (potential_artist.lower() not in ("music", "media", "audio", "local", "object")
+                            and not _is_hash_like(potential_artist)):
                             artist = potential_artist
 
-        # Also try extracting from the resolved URL
-        if not title or title in ("file", "object"):
-            from urllib.parse import urlparse, unquote
-            parsed = urlparse(resolved_url)
-            if parsed.path:
-                filename = unquote(parsed.path.split("/")[-1])
-                for ext in [".mp3", ".m4a", ".flac", ".wav", ".ogg", ".aac", ".opus"]:
-                    if filename.lower().endswith(ext):
-                        filename = filename[:-len(ext)]
-                        break
-                if filename and filename not in ("file", "object"):
-                    title = filename
+        # Don't try to extract from Plex/hash URLs - they don't have useful info
+        # Title will come from stream metadata instead
 
         # Process URL to ensure it's playable
         resolved_url = async_process_play_media_url(self.hass, resolved_url)
@@ -393,8 +395,11 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
     async def async_media_next_track(self) -> None:
         """Play the next track in the queue."""
         if not self._queue or self._queue_index >= len(self._queue) - 1:
-            _LOGGER.debug("No next track available (index=%d, queue size=%d)",
-                         self._queue_index, len(self._queue))
+            _LOGGER.warning(
+                "No next track available for '%s' (index=%d, queue size=%d). "
+                "Queue is populated when tracks are added with enqueue mode.",
+                self._device_name, self._queue_index, len(self._queue)
+            )
             return
 
         self._queue_index += 1
