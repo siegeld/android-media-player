@@ -262,11 +262,28 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
             self._device_name, media_type, media_id, enqueue
         )
 
-        # Resolve media_source URIs to actual URLs
+        # Resolve media_source URIs to actual URLs and get metadata
         resolved_url = media_id
         if media_source.is_media_source_id(media_id):
             _LOGGER.debug("Resolving media_source URI: %s", media_id)
             try:
+                # First, try to browse this specific item to get its metadata
+                if not title:
+                    try:
+                        browse_result = await media_source.async_browse_media(
+                            self.hass, media_id
+                        )
+                        if browse_result:
+                            _LOGGER.info(
+                                "Got browse metadata: title=%s, can_play=%s",
+                                browse_result.title, browse_result.can_play
+                            )
+                            if browse_result.title:
+                                title = browse_result.title
+                    except Exception as browse_err:
+                        _LOGGER.debug("Could not browse media for metadata: %s", browse_err)
+
+                # Now resolve to playable URL
                 sourced_media = await media_source.async_resolve_media(
                     self.hass, media_id, self.entity_id
                 )
