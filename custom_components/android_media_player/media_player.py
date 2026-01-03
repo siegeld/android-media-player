@@ -292,15 +292,12 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
                     except Exception as browse_err:
                         _LOGGER.debug("Could not browse media for metadata: %s", browse_err)
 
-                # Log all available browse_result attributes for debugging
-                if browse_result and not artist:
+                # Log ALL available browse_result attributes for debugging
+                if browse_result:
                     _LOGGER.info(
-                        "BrowseMedia attrs: media_content_id=%s, children_media_class=%s",
-                        getattr(browse_result, 'media_content_id', None),
-                        getattr(browse_result, 'children_media_class', None)
+                        "BrowseMedia ALL attrs: %s",
+                        {k: getattr(browse_result, k, None) for k in dir(browse_result) if not k.startswith('_')}
                     )
-                    # For DLNA, check if there's additional metadata we can use
-                    # Note: parent fetching removed - was returning server name instead of album
 
                 # Now resolve to playable URL
                 sourced_media = await media_source.async_resolve_media(
