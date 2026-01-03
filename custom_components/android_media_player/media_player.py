@@ -275,13 +275,38 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
                         )
                         if browse_result:
                             _LOGGER.info(
-                                "Got browse metadata: title=%s, can_play=%s",
-                                browse_result.title, browse_result.can_play
+                                "Got browse metadata: title=%s, media_class=%s, thumbnail=%s",
+                                browse_result.title,
+                                getattr(browse_result, 'media_class', None),
+                                getattr(browse_result, 'thumbnail', None)
                             )
                             if browse_result.title:
                                 title = browse_result.title
+                            # Try to get artist from media_content_id path
+                            # Format: media-source://dlna_dms/server/:parentId/:itemId
+                            if not artist:
+                                content_id = getattr(browse_result, 'media_content_id', '') or media_id
+                                # Try to get parent folder info for artist/album
+                                parts = content_id.split('/')
+                                _LOGGER.debug("media_content_id parts: %s", parts)
                     except Exception as browse_err:
                         _LOGGER.debug("Could not browse media for metadata: %s", browse_err)
+
+                # Try to get parent (album) info for artist
+                if not artist and title:
+                    try:
+                        # Get parent container by removing last path segment
+                        parent_id = '/'.join(media_id.rsplit('/', 1)[:-1]) if '/:' in media_id else None
+                        if parent_id and parent_id != media_id:
+                            parent_result = await media_source.async_browse_media(
+                                self.hass, parent_id
+                            )
+                            if parent_result and parent_result.title:
+                                # Parent is usually the album, grandparent is artist
+                                artist = parent_result.title
+                                _LOGGER.info("Got parent (album) info: %s", artist)
+                    except Exception as parent_err:
+                        _LOGGER.debug("Could not get parent metadata: %s", parent_err)
 
                 # Now resolve to playable URL
                 sourced_media = await media_source.async_resolve_media(
