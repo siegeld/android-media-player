@@ -264,6 +264,7 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
 
         # Resolve media_source URIs to actual URLs and get metadata
         resolved_url = media_id
+        browse_result = None
         if media_source.is_media_source_id(media_id):
             _LOGGER.debug("Resolving media_source URI: %s", media_id)
             try:
@@ -308,6 +309,9 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
             except media_source.Unresolvable as err:
                 _LOGGER.error("Cannot resolve media_source URI %s: %s", media_id, err)
                 return
+            except Exception as err:
+                _LOGGER.error("Error resolving media_source URI %s: %s (%s)", media_id, err, type(err).__name__)
+                return
 
         # Helper to check if string looks like a hash/ID (skip these for metadata)
         def _is_hash_like(s: str) -> bool:
@@ -322,27 +326,30 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         # Try to extract title from the original media_id if not provided
         if not title:
             # media_id often contains path info like "media-source://media_source/local/Music/Artist/Album/Track.mp3"
-            from urllib.parse import urlparse, unquote
-            parsed_id = urlparse(media_id)
-            if parsed_id.path:
-                path_parts = [unquote(p) for p in parsed_id.path.split("/") if p]
-                if path_parts:
-                    filename = path_parts[-1]
-                    # Remove common extensions
-                    for ext in [".mp3", ".m4a", ".flac", ".wav", ".ogg", ".aac", ".opus"]:
-                        if filename.lower().endswith(ext):
-                            filename = filename[:-len(ext)]
-                            break
-                    # Skip generic names and hash-like IDs
-                    if filename and filename not in ("file", "object") and not _is_hash_like(filename):
-                        title = filename
-                    # Try to get artist from parent folder
-                    if not artist and len(path_parts) >= 2:
-                        potential_artist = path_parts[-2]
-                        # Skip generic folder names and hash-like IDs
-                        if (potential_artist.lower() not in ("music", "media", "audio", "local", "object")
-                            and not _is_hash_like(potential_artist)):
-                            artist = potential_artist
+            try:
+                from urllib.parse import urlparse, unquote
+                parsed_id = urlparse(media_id)
+                if parsed_id.path:
+                    path_parts = [unquote(p) for p in parsed_id.path.split("/") if p]
+                    if path_parts:
+                        filename = path_parts[-1]
+                        # Remove common extensions
+                        for ext in [".mp3", ".m4a", ".flac", ".wav", ".ogg", ".aac", ".opus"]:
+                            if filename.lower().endswith(ext):
+                                filename = filename[:-len(ext)]
+                                break
+                        # Skip generic names and hash-like IDs
+                        if filename and filename not in ("file", "object") and not _is_hash_like(filename):
+                            title = filename
+                        # Try to get artist from parent folder
+                        if not artist and len(path_parts) >= 2:
+                            potential_artist = path_parts[-2]
+                            # Skip generic folder names and hash-like IDs
+                            if (potential_artist.lower() not in ("music", "media", "audio", "local", "object")
+                                and not _is_hash_like(potential_artist)):
+                                artist = potential_artist
+            except Exception as parse_err:
+                _LOGGER.debug("Could not parse media_id for title/artist: %s", parse_err)
 
         # Don't try to extract from Plex/hash URLs - they don't have useful info
         # Title will come from stream metadata instead
