@@ -247,8 +247,8 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         self, media_type: MediaType | str, media_id: str, **kwargs: Any
     ) -> None:
         """Play a piece of media."""
-        # Log all kwargs for debugging
-        _LOGGER.debug("async_play_media kwargs: %s", kwargs)
+        # Log all kwargs for debugging - use INFO temporarily to ensure we see it
+        _LOGGER.info("async_play_media FULL kwargs: %s", kwargs)
 
         # Extract metadata from various possible locations
         extra = kwargs.get("extra", {})
