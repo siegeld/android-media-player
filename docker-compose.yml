@@ -1,0 +1,21 @@
+services:
+  update-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.update-server
+    network_mode: host
+    volumes:
+      # Mount the APK output directory so the server always serves the latest build
+      - ./app/build/outputs/apk/debug:/app/app/build/outputs/apk/debug:ro
+      # Mount the build.gradle.kts for version detection
+      - ./app/build.gradle.kts:/app/app/build.gradle.kts:ro
+      # Mount the ADB platform-tools for device management
+      - ./android-sdk/platform-tools:/app/android-sdk/platform-tools:ro
+      # Persist logs and state data
+      - server-data:/app/data
+    environment:
+      - HOME=/root
+    restart: unless-stopped
+
+volumes:
+  server-data:

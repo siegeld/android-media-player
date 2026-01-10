@@ -7,8 +7,8 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import android.support.v4.media.session.MediaSessionCompat
-import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.androidmediaplayer.util.AppLog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Metadata
@@ -57,36 +57,36 @@ class MediaPlayerService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder {
-        Log.d(TAG, "Service bound")
+        AppLog.d(TAG, "Service bound")
         return binder
     }
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "Service created")
+        AppLog.i(TAG, "Service created")
         initializePlayer()
         initializeMediaSession()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand: action=${intent?.action}")
+        AppLog.d(TAG, "onStartCommand: action=${intent?.action}")
         when (intent?.action) {
             ACTION_PLAY -> {
-                Log.d(TAG, "Received ACTION_PLAY from notification")
+                AppLog.d(TAG, "Received ACTION_PLAY from notification")
                 play()
             }
             ACTION_PAUSE -> {
-                Log.d(TAG, "Received ACTION_PAUSE from notification")
+                AppLog.d(TAG, "Received ACTION_PAUSE from notification")
                 pause()
             }
             ACTION_STOP -> {
-                Log.d(TAG, "Received ACTION_STOP from notification")
+                AppLog.d(TAG, "Received ACTION_STOP from notification")
                 stop()
             }
             else -> {
                 val port = intent?.getIntExtra(EXTRA_PORT, 8765) ?: 8765
                 deviceName = intent?.getStringExtra(EXTRA_DEVICE_NAME) ?: "Android Media Player"
-                Log.i(TAG, "Starting foreground service: deviceName=$deviceName, port=$port")
+                AppLog.i(TAG, "Starting foreground service: deviceName=$deviceName, port=$port")
                 startForegroundService(port)
             }
         }
@@ -94,13 +94,13 @@ class MediaPlayerService : Service() {
     }
 
     private fun startForegroundService(port: Int) {
-        Log.d(TAG, "Starting foreground with notification")
+        AppLog.d(TAG, "Starting foreground with notification")
         startForeground(NOTIFICATION_ID, createNotification())
         startHttpServer(port)
     }
 
     private fun initializePlayer() {
-        Log.d(TAG, "Initializing ExoPlayer")
+        AppLog.d(TAG, "Initializing ExoPlayer")
         player = ExoPlayer.Builder(this).build().apply {
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -111,18 +111,18 @@ class MediaPlayerService : Service() {
                         Player.STATE_ENDED -> "ENDED"
                         else -> "UNKNOWN($playbackState)"
                     }
-                    Log.d(TAG, "Playback state changed: $stateStr")
+                    AppLog.d(TAG, "Playback state changed: $stateStr")
                     updatePlayerState()
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    Log.d(TAG, "isPlaying changed: $isPlaying")
+                    AppLog.d(TAG, "isPlaying changed: $isPlaying")
                     updatePlayerState()
                     updateNotification()
                 }
 
                 override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                    Log.d(TAG, "Media metadata changed: title=${mediaMetadata.title}, artist=${mediaMetadata.artist}, displayTitle=${mediaMetadata.displayTitle}")
+                    AppLog.d(TAG, "Media metadata changed: title=${mediaMetadata.title}, artist=${mediaMetadata.artist}, displayTitle=${mediaMetadata.displayTitle}")
                     // Try different metadata fields
                     val newTitle = mediaMetadata.title?.toString()
                         ?: mediaMetadata.displayTitle?.toString()
@@ -139,12 +139,12 @@ class MediaPlayerService : Service() {
 
                 override fun onMetadata(metadata: Metadata) {
                     // Handle ICY metadata from internet radio streams
-                    Log.d(TAG, "onMetadata: ${metadata.length()} entries")
+                    AppLog.d(TAG, "onMetadata: ${metadata.length()} entries")
                     for (i in 0 until metadata.length()) {
                         val entry = metadata.get(i)
-                        Log.d(TAG, "Metadata entry $i: ${entry::class.simpleName} = $entry")
+                        AppLog.d(TAG, "Metadata entry $i: ${entry::class.simpleName} = $entry")
                         if (entry is IcyInfo) {
-                            Log.i(TAG, "ICY metadata: title=${entry.title}, url=${entry.url}")
+                            AppLog.i(TAG, "ICY metadata: title=${entry.title}, url=${entry.url}")
                             entry.title?.let { icyTitle ->
                                 // ICY title often has format "Artist - Title"
                                 if (icyTitle.contains(" - ")) {
@@ -162,40 +162,48 @@ class MediaPlayerService : Service() {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    Log.e(TAG, "Player error: ${error.errorCodeName} - ${error.message}", error)
+                    AppLog.e(TAG, "Player error: ${error.errorCodeName} - ${error.message}", error)
                     handlePlaybackError(error)
                 }
             })
         }
-        Log.i(TAG, "ExoPlayer initialized successfully")
+        AppLog.i(TAG, "ExoPlayer initialized successfully")
     }
 
     private fun initializeMediaSession() {
-        Log.d(TAG, "Initializing MediaSession")
+        AppLog.d(TAG, "Initializing MediaSession")
         mediaSession = MediaSessionCompat(this, "MediaPlayerService").apply {
             isActive = true
         }
-        Log.i(TAG, "MediaSession initialized")
+        AppLog.i(TAG, "MediaSession initialized")
     }
 
     private fun startHttpServer(port: Int) {
-        Log.i(TAG, "Starting HTTP server on port $port")
+        // Don't start if already running
+        if (httpServer != null) {
+            AppLog.d(TAG, "HTTP server already running, skipping start")
+            return
+        }
+        AppLog.i(TAG, "Starting HTTP server on port $port")
         serviceScope.launch(Dispatchers.IO) {
             try {
                 httpServer = MediaHttpServer(this@MediaPlayerService, port, deviceName)
                 httpServer?.start()
-                Log.i(TAG, "HTTP server started successfully on port $port")
+                AppLog.i(TAG, "HTTP server started successfully on port $port")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start HTTP server: ${e.message}", e)
+                AppLog.e(TAG, "Failed to start HTTP server: ${e.message}", e)
             }
         }
     }
 
     fun playMedia(url: String, title: String? = null, artist: String? = null) {
-        Log.i(TAG, "playMedia: url=$url, title=$title, artist=$artist")
+        AppLog.i(TAG, "playMedia: url=$url, title=$title, artist=$artist")
         currentUrl = url
         currentTitle = title
         currentArtist = artist
+
+        // Report track played to remote logger
+        AppLog.trackPlayed(url, title, artist)
 
         val mediaItem = MediaItem.Builder()
             .setUri(url)
@@ -209,27 +217,27 @@ class MediaPlayerService : Service() {
 
         player?.apply {
             setMediaItem(mediaItem)
-            Log.d(TAG, "Media item set, preparing player")
+            AppLog.d(TAG, "Media item set, preparing player")
             prepare()
             play()
-            Log.d(TAG, "Playback started")
+            AppLog.d(TAG, "Playback started")
         }
         updatePlayerState()
         updateNotification()
     }
 
     fun play() {
-        Log.d(TAG, "play() called")
+        AppLog.d(TAG, "play() called")
         player?.play()
     }
 
     fun pause() {
-        Log.d(TAG, "pause() called")
+        AppLog.d(TAG, "pause() called")
         player?.pause()
     }
 
     fun stop() {
-        Log.d(TAG, "stop() called")
+        AppLog.d(TAG, "stop() called")
         player?.stop()
         player?.clearMediaItems()
         currentTitle = null
@@ -241,7 +249,7 @@ class MediaPlayerService : Service() {
 
     fun setVolume(level: Float) {
         val clampedLevel = level.coerceIn(0f, 1f)
-        Log.d(TAG, "setVolume: $clampedLevel (requested: $level)")
+        AppLog.d(TAG, "setVolume: $clampedLevel (requested: $level)")
         player?.volume = clampedLevel
         updatePlayerState()
     }
@@ -249,7 +257,7 @@ class MediaPlayerService : Service() {
     fun getVolume(): Float = player?.volume ?: 1f
 
     fun setMuted(muted: Boolean) {
-        Log.d(TAG, "setMuted: $muted")
+        AppLog.d(TAG, "setMuted: $muted")
         player?.volume = if (muted) 0f else 1f
         updatePlayerState()
     }
@@ -258,12 +266,12 @@ class MediaPlayerService : Service() {
 
     fun toggleMute() {
         val newMuted = !isMuted()
-        Log.d(TAG, "toggleMute: muted will be $newMuted")
+        AppLog.d(TAG, "toggleMute: muted will be $newMuted")
         setMuted(newMuted)
     }
 
     fun seek(position: Long) {
-        Log.d(TAG, "seek: position=$position ms")
+        AppLog.d(TAG, "seek: position=$position ms")
         player?.seekTo(position)
         updatePlayerState()
     }
@@ -271,6 +279,10 @@ class MediaPlayerService : Service() {
     fun getPosition(): Long = player?.currentPosition ?: 0
 
     fun getDuration(): Long = player?.duration ?: 0
+
+    fun setUpdateHandler(handler: MediaHttpServer.UpdateHandler?) {
+        httpServer?.updateHandler = handler
+    }
 
     private var lastError: String? = null
 
@@ -298,7 +310,7 @@ class MediaPlayerService : Service() {
                 "Playback error: ${error.errorCodeName}"
         }
 
-        Log.e(TAG, "Playback error handled: $errorMessage for URL: $currentUrl")
+        AppLog.e(TAG, "Playback error handled: $errorMessage for URL: $currentUrl")
         lastError = errorMessage
 
         // Reset player state but keep it ready for next command
@@ -353,7 +365,7 @@ class MediaPlayerService : Service() {
         )
 
         if (_playerState.value != newState) {
-            Log.d(TAG, "State updated: state=$state, volume=${newState.volume}, muted=${newState.muted}, title=$currentTitle")
+            AppLog.d(TAG, "State updated: state=$state, volume=${newState.volume}, muted=${newState.muted}, title=$currentTitle")
             _playerState.value = newState
         }
 
@@ -429,12 +441,12 @@ class MediaPlayerService : Service() {
     }
 
     override fun onDestroy() {
-        Log.i(TAG, "Service destroying")
+        AppLog.i(TAG, "Service destroying")
         serviceScope.cancel()
         httpServer?.stop()
         player?.release()
         mediaSession?.release()
-        Log.i(TAG, "Service destroyed")
+        AppLog.i(TAG, "Service destroyed")
         super.onDestroy()
     }
 }

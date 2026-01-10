@@ -15,4 +15,15 @@
     <string name="status_playing">Playing</string>
     <string name="status_paused">Paused</string>
     <string name="ip_address">IP Address</string>
+    <string name="debug_logs">Debug Logs</string>
+    <string name="clear">Clear</string>
+    <string name="logging_disabled">Logging disabled. Toggle switch to enable.</string>
+    <string name="check_update">Update</string>
+    <string name="checking_update">Checking...</string>
+    <string name="downloading_update">Downloading %d%%</string>
+    <string name="installing_update">Installing...</string>
+    <string name="no_update">Up to date</string>
+    <string name="update_available">Update available: v%s</string>
+    <string name="update_error">Error: %s</string>
+    <string name="update_server_host">Update Server</string>
 </resources>

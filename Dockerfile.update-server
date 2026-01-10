@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy the update server script
+COPY update-server.py /app/
+
+# Create directory structure for mounted volumes
+RUN mkdir -p /app/app/build/outputs/apk/debug /app/app
+
+# Expose the update server port
+EXPOSE 8888
+
+CMD ["python3", "update-server.py"]

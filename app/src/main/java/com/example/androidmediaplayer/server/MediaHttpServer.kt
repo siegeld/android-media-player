@@ -1,8 +1,8 @@
 package com.example.androidmediaplayer.server
 
-import android.util.Log
 import com.example.androidmediaplayer.model.*
 import com.example.androidmediaplayer.service.MediaPlayerService
+import com.example.androidmediaplayer.util.AppLog
 import com.google.gson.Gson
 import io.ktor.http.*
 import io.ktor.serialization.gson.*
@@ -29,14 +29,30 @@ class MediaHttpServer(
         private const val TAG = "MediaHttpServer"
     }
 
+    interface UpdateHandler {
+        suspend fun checkForUpdate(): UpdateInfo?
+        suspend fun downloadAndInstall(): Boolean
+        fun getUpdateState(): String
+    }
+
+    data class UpdateInfo(
+        val versionName: String,
+        val versionCode: Int,
+        val isNewer: Boolean,
+        val currentVersion: String,
+        val currentCode: Int
+    )
+
     private var server: NettyApplicationEngine? = null
     private val gson = Gson()
     private val wsConnections = ConcurrentHashMap.newKeySet<WebSocketSession>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val connectionCounter = AtomicInteger(0)
 
+    var updateHandler: UpdateHandler? = null
+
     fun start() {
-        Log.i(TAG, "Starting HTTP/WebSocket server on port $port for device '$deviceName'")
+        AppLog.i(TAG, "Starting HTTP/WebSocket server on port $port for device '$deviceName'")
         server = embeddedServer(Netty, port = port) {
             install(ContentNegotiation) {
                 gson {
@@ -51,36 +67,36 @@ class MediaHttpServer(
             }
             configureRouting()
         }.start(wait = false)
-        Log.i(TAG, "Server started successfully on port $port")
+        AppLog.i(TAG, "Server started successfully on port $port")
     }
 
     fun stop() {
-        Log.i(TAG, "Stopping HTTP server, closing ${wsConnections.size} WebSocket connections")
+        AppLog.i(TAG, "Stopping HTTP server, closing ${wsConnections.size} WebSocket connections")
         scope.cancel()
         wsConnections.forEach { session ->
             scope.launch {
                 try {
                     session.close(CloseReason(CloseReason.Codes.GOING_AWAY, "Server shutting down"))
                 } catch (e: Exception) {
-                    Log.w(TAG, "Error closing WebSocket session: ${e.message}")
+                    AppLog.w(TAG, "Error closing WebSocket session: ${e.message}")
                 }
             }
         }
         server?.stop(1000, 2000)
-        Log.i(TAG, "HTTP server stopped")
+        AppLog.i(TAG, "HTTP server stopped")
     }
 
     fun broadcastState(state: PlayerState) {
         if (wsConnections.isEmpty()) return
 
         val json = gson.toJson(state)
-        Log.v(TAG, "Broadcasting state to ${wsConnections.size} clients: state=${state.state}")
+        AppLog.v(TAG, "Broadcasting state to ${wsConnections.size} clients: state=${state.state}")
         wsConnections.forEach { session ->
             scope.launch {
                 try {
                     session.send(Frame.Text(json))
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to send to WebSocket client, removing: ${e.message}")
+                    AppLog.w(TAG, "Failed to send to WebSocket client, removing: ${e.message}")
                     wsConnections.remove(session)
                 }
             }
@@ -92,7 +108,7 @@ class MediaHttpServer(
             // Device info
             get("/") {
                 val clientIp = call.request.local.remoteHost
-                Log.d(TAG, "GET / from $clientIp - returning device info")
+                AppLog.d(TAG, "GET / from $clientIp - returning device info")
                 call.respond(mapOf(
                     "name" to deviceName,
                     "type" to "android_media_player",
@@ -104,7 +120,7 @@ class MediaHttpServer(
             // Get current state
             get("/state") {
                 val clientIp = call.request.local.remoteHost
-                Log.d(TAG, "GET /state from $clientIp")
+                AppLog.d(TAG, "GET /state from $clientIp")
                 call.respond(service.playerState.value)
             }
 
@@ -115,20 +131,20 @@ class MediaHttpServer(
                     val contentType = call.request.contentType()
                     if (contentType == ContentType.Application.Json) {
                         val request = call.receive<PlayMediaRequest>()
-                        Log.i(TAG, "POST /play from $clientIp - url=${request.url}, title=${request.title}")
+                        AppLog.i(TAG, "POST /play from $clientIp - url=${request.url}, title=${request.title}")
                         kotlinx.coroutines.withContext(Dispatchers.Main) {
                             service.playMedia(request.url, request.title, request.artist)
                         }
                         call.respond(ApiResponse(success = true, message = "Playing", state = service.playerState.value))
                     } else {
-                        Log.d(TAG, "POST /play from $clientIp - resume playback")
+                        AppLog.d(TAG, "POST /play from $clientIp - resume playback")
                         kotlinx.coroutines.withContext(Dispatchers.Main) {
                             service.play()
                         }
                         call.respond(ApiResponse(success = true, message = "Resumed", state = service.playerState.value))
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "POST /play error from $clientIp: ${e.message}", e)
+                    AppLog.e(TAG, "POST /play error from $clientIp: ${e.message}", e)
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(success = false, message = e.message))
                 }
             }
@@ -136,7 +152,7 @@ class MediaHttpServer(
             // Pause
             post("/pause") {
                 val clientIp = call.request.local.remoteHost
-                Log.d(TAG, "POST /pause from $clientIp")
+                AppLog.d(TAG, "POST /pause from $clientIp")
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     service.pause()
                 }
@@ -146,7 +162,7 @@ class MediaHttpServer(
             // Stop
             post("/stop") {
                 val clientIp = call.request.local.remoteHost
-                Log.d(TAG, "POST /stop from $clientIp")
+                AppLog.d(TAG, "POST /stop from $clientIp")
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     service.stop()
                 }
@@ -158,13 +174,13 @@ class MediaHttpServer(
                 val clientIp = call.request.local.remoteHost
                 try {
                     val request = call.receive<VolumeRequest>()
-                    Log.d(TAG, "POST /volume from $clientIp - level=${request.level}")
+                    AppLog.d(TAG, "POST /volume from $clientIp - level=${request.level}")
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
                         service.setVolume(request.level)
                     }
                     call.respond(ApiResponse(success = true, message = "Volume set", state = service.playerState.value))
                 } catch (e: Exception) {
-                    Log.e(TAG, "POST /volume error from $clientIp: ${e.message}", e)
+                    AppLog.e(TAG, "POST /volume error from $clientIp: ${e.message}", e)
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(success = false, message = e.message))
                 }
             }
@@ -176,7 +192,7 @@ class MediaHttpServer(
                     val contentType = call.request.contentType()
                     if (contentType == ContentType.Application.Json) {
                         val request = call.receive<MuteRequest>()
-                        Log.d(TAG, "POST /mute from $clientIp - muted=${request.muted}")
+                        AppLog.d(TAG, "POST /mute from $clientIp - muted=${request.muted}")
                         kotlinx.coroutines.withContext(Dispatchers.Main) {
                             if (request.muted != null) {
                                 service.setMuted(request.muted)
@@ -185,14 +201,14 @@ class MediaHttpServer(
                             }
                         }
                     } else {
-                        Log.d(TAG, "POST /mute from $clientIp - toggle")
+                        AppLog.d(TAG, "POST /mute from $clientIp - toggle")
                         kotlinx.coroutines.withContext(Dispatchers.Main) {
                             service.toggleMute()
                         }
                     }
                     call.respond(ApiResponse(success = true, message = "Mute toggled", state = service.playerState.value))
                 } catch (e: Exception) {
-                    Log.e(TAG, "POST /mute error from $clientIp: ${e.message}", e)
+                    AppLog.e(TAG, "POST /mute error from $clientIp: ${e.message}", e)
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(success = false, message = e.message))
                 }
             }
@@ -202,14 +218,82 @@ class MediaHttpServer(
                 val clientIp = call.request.local.remoteHost
                 try {
                     val request = call.receive<SeekRequest>()
-                    Log.d(TAG, "POST /seek from $clientIp - position=${request.position}ms")
+                    AppLog.d(TAG, "POST /seek from $clientIp - position=${request.position}ms")
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
                         service.seek(request.position)
                     }
                     call.respond(ApiResponse(success = true, message = "Seeked", state = service.playerState.value))
                 } catch (e: Exception) {
-                    Log.e(TAG, "POST /seek error from $clientIp: ${e.message}", e)
+                    AppLog.e(TAG, "POST /seek error from $clientIp: ${e.message}", e)
                     call.respond(HttpStatusCode.BadRequest, ApiResponse(success = false, message = e.message))
+                }
+            }
+
+            // Check for updates
+            get("/update") {
+                val clientIp = call.request.local.remoteHost
+                AppLog.d(TAG, "GET /update from $clientIp")
+                val handler = updateHandler
+                if (handler == null) {
+                    call.respond(mapOf("success" to false, "message" to "Update handler not configured"))
+                    return@get
+                }
+                try {
+                    val info = handler.checkForUpdate()
+                    if (info != null) {
+                        call.respond(mapOf(
+                            "success" to true,
+                            "updateAvailable" to info.isNewer,
+                            "currentVersion" to info.currentVersion,
+                            "currentCode" to info.currentCode,
+                            "availableVersion" to info.versionName,
+                            "availableCode" to info.versionCode,
+                            "state" to handler.getUpdateState()
+                        ))
+                    } else {
+                        call.respond(mapOf(
+                            "success" to false,
+                            "message" to "Failed to check for updates",
+                            "state" to handler.getUpdateState()
+                        ))
+                    }
+                } catch (e: Exception) {
+                    AppLog.e(TAG, "GET /update error: ${e.message}", e)
+                    call.respond(mapOf("success" to false, "message" to e.message))
+                }
+            }
+
+            // Trigger update installation
+            post("/update") {
+                val clientIp = call.request.local.remoteHost
+                AppLog.i(TAG, "POST /update from $clientIp - triggering update")
+                val handler = updateHandler
+                if (handler == null) {
+                    call.respond(mapOf("success" to false, "message" to "Update handler not configured"))
+                    return@post
+                }
+                try {
+                    // First check if update is available
+                    val info = handler.checkForUpdate()
+                    if (info == null || !info.isNewer) {
+                        call.respond(mapOf(
+                            "success" to false,
+                            "message" to "No update available",
+                            "state" to handler.getUpdateState()
+                        ))
+                        return@post
+                    }
+                    // Trigger download and install
+                    val result = handler.downloadAndInstall()
+                    call.respond(mapOf(
+                        "success" to result,
+                        "message" to if (result) "Update started" else "Update failed",
+                        "version" to info.versionName,
+                        "state" to handler.getUpdateState()
+                    ))
+                } catch (e: Exception) {
+                    AppLog.e(TAG, "POST /update error: ${e.message}", e)
+                    call.respond(mapOf("success" to false, "message" to e.message))
                 }
             }
 
@@ -217,13 +301,13 @@ class MediaHttpServer(
             webSocket("/ws") {
                 val connectionId = connectionCounter.incrementAndGet()
                 val clientInfo = "${call.request.local.remoteHost}:${call.request.local.remotePort}"
-                Log.i(TAG, "WebSocket client #$connectionId connected from $clientInfo")
+                AppLog.i(TAG, "WebSocket client #$connectionId connected from $clientInfo")
                 wsConnections.add(this)
 
                 try {
                     // Send current state on connect
                     val initialState = gson.toJson(service.playerState.value)
-                    Log.d(TAG, "Sending initial state to client #$connectionId")
+                    AppLog.d(TAG, "Sending initial state to client #$connectionId")
                     send(Frame.Text(initialState))
 
                     // Keep connection alive and handle incoming messages
@@ -231,21 +315,21 @@ class MediaHttpServer(
                         when (frame) {
                             is Frame.Text -> {
                                 val text = frame.readText()
-                                Log.d(TAG, "WebSocket command from client #$connectionId: $text")
+                                AppLog.d(TAG, "WebSocket command from client #$connectionId: $text")
                                 handleWebSocketCommand(text, connectionId)
                             }
                             is Frame.Ping -> {
-                                Log.v(TAG, "Ping from client #$connectionId")
+                                AppLog.v(TAG, "Ping from client #$connectionId")
                                 send(Frame.Pong(frame.data))
                             }
                             else -> {}
                         }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "WebSocket error for client #$connectionId: ${e.message}")
+                    AppLog.w(TAG, "WebSocket error for client #$connectionId: ${e.message}")
                 } finally {
                     wsConnections.remove(this)
-                    Log.i(TAG, "WebSocket client #$connectionId disconnected, ${wsConnections.size} clients remaining")
+                    AppLog.i(TAG, "WebSocket client #$connectionId disconnected, ${wsConnections.size} clients remaining")
                 }
             }
         }
@@ -255,13 +339,13 @@ class MediaHttpServer(
         try {
             val command = gson.fromJson(text, Map::class.java)
             val cmdName = command["command"]
-            Log.d(TAG, "Processing WebSocket command '$cmdName' from client #$connectionId")
+            AppLog.d(TAG, "Processing WebSocket command '$cmdName' from client #$connectionId")
 
             when (cmdName) {
                 "play" -> {
                     val url = command["url"] as? String
                     if (url != null) {
-                        Log.i(TAG, "WS play command: url=$url, title=${command["title"]}")
+                        AppLog.i(TAG, "WS play command: url=$url, title=${command["title"]}")
                         kotlinx.coroutines.withContext(Dispatchers.Main) {
                             service.playMedia(
                                 url,
@@ -270,32 +354,32 @@ class MediaHttpServer(
                             )
                         }
                     } else {
-                        Log.d(TAG, "WS play command: resume")
+                        AppLog.d(TAG, "WS play command: resume")
                         kotlinx.coroutines.withContext(Dispatchers.Main) {
                             service.play()
                         }
                     }
                 }
                 "pause" -> {
-                    Log.d(TAG, "WS pause command")
+                    AppLog.d(TAG, "WS pause command")
                     kotlinx.coroutines.withContext(Dispatchers.Main) { service.pause() }
                 }
                 "stop" -> {
-                    Log.d(TAG, "WS stop command")
+                    AppLog.d(TAG, "WS stop command")
                     kotlinx.coroutines.withContext(Dispatchers.Main) { service.stop() }
                 }
                 "volume" -> {
                     val level = (command["level"] as? Number)?.toFloat()
                     if (level != null) {
-                        Log.d(TAG, "WS volume command: level=$level")
+                        AppLog.d(TAG, "WS volume command: level=$level")
                         kotlinx.coroutines.withContext(Dispatchers.Main) { service.setVolume(level) }
                     } else {
-                        Log.w(TAG, "WS volume command missing 'level' parameter")
+                        AppLog.w(TAG, "WS volume command missing 'level' parameter")
                     }
                 }
                 "mute" -> {
                     val muted = command["muted"] as? Boolean
-                    Log.d(TAG, "WS mute command: muted=$muted")
+                    AppLog.d(TAG, "WS mute command: muted=$muted")
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
                         if (muted != null) service.setMuted(muted)
                         else service.toggleMute()
@@ -304,22 +388,22 @@ class MediaHttpServer(
                 "seek" -> {
                     val position = (command["position"] as? Number)?.toLong()
                     if (position != null) {
-                        Log.d(TAG, "WS seek command: position=$position ms")
+                        AppLog.d(TAG, "WS seek command: position=$position ms")
                         kotlinx.coroutines.withContext(Dispatchers.Main) { service.seek(position) }
                     } else {
-                        Log.w(TAG, "WS seek command missing 'position' parameter")
+                        AppLog.w(TAG, "WS seek command missing 'position' parameter")
                     }
                 }
                 "get_state" -> {
-                    Log.d(TAG, "WS get_state command")
+                    AppLog.d(TAG, "WS get_state command")
                     // State will be broadcast via broadcastState
                 }
                 else -> {
-                    Log.w(TAG, "Unknown WebSocket command: $cmdName")
+                    AppLog.w(TAG, "Unknown WebSocket command: $cmdName")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing WebSocket command from client #$connectionId: ${e.message}", e)
+            AppLog.e(TAG, "Error processing WebSocket command from client #$connectionId: ${e.message}", e)
         }
     }
 }
