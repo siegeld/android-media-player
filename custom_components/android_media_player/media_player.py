@@ -1,6 +1,7 @@
 """Media Player platform for Android Media Player integration."""
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -157,6 +158,18 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         """Return the content type of current playing media."""
         if self.coordinator.state.get("mediaUrl"):
             return MediaType.MUSIC
+        return None
+
+    @property
+    def media_content_id(self) -> str | None:
+        """Return the content ID of current playing media."""
+        return self.coordinator.state.get("mediaUrl")
+
+    @property
+    def media_position_updated_at(self) -> datetime | None:
+        """Return when position was last updated."""
+        if self.coordinator.state.get("mediaPosition") is not None:
+            return datetime.now()
         return None
 
     async def async_added_to_hass(self) -> None:
