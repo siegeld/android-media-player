@@ -158,6 +158,10 @@ class AndroidMediaPlayerCoordinator:
                 self.name, self.ws_url
             )
 
+            # Fetch initial state via REST (don't wait for device to push)
+            await self.async_get_state()
+            self._notify_listeners()
+
             # Start listening for messages
             self._ws_task = asyncio.create_task(self._listen_websocket())
 
