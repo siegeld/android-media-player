@@ -193,6 +193,15 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         if not result:
             _LOGGER.warning("Failed to send pause command to '%s'", self._device_name)
 
+    async def async_media_play_pause(self) -> None:
+        """Toggle play/pause."""
+        current_state = self.coordinator.state.get("state", "idle")
+        _LOGGER.debug("async_media_play_pause called for '%s', current state: %s", self._device_name, current_state)
+        if current_state == "playing":
+            await self.async_media_pause()
+        else:
+            await self.async_media_play()
+
     async def async_media_stop(self) -> None:
         """Send stop command."""
         _LOGGER.debug("async_media_stop called for '%s'", self._device_name)
