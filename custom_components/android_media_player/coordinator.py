@@ -270,6 +270,8 @@ class AndroidMediaPlayerCoordinator:
     async def _reconnect(self, delay: int) -> None:
         """Attempt to reconnect after a delay."""
         await asyncio.sleep(delay)
+        # Clear the task reference so _schedule_reconnect can create a new one if needed
+        self._reconnect_task = None
         if self._should_reconnect:
             _LOGGER.info(
                 "Attempting reconnect #%d to Android Media Player '%s' (next delay: %ds)...",
