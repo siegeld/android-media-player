@@ -122,11 +122,23 @@
 
             <TextView
                 android:id="@+id/nowPlayingText"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:textSize="14sp"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/nowPlayingUrlText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="11sp"
                 android:textColor="@color/gray"
+                android:ellipsize="middle"
+                android:maxLines="1"
                 android:visibility="gone" />
 
         </LinearLayout>

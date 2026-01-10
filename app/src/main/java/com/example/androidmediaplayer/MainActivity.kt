@@ -576,15 +576,27 @@ class MainActivity : AppCompatActivity() {
 
         binding.playerStateText.text = "Player: $stateText | Volume: ${(state.volume * 100).toInt()}%"
 
-        if (state.mediaTitle != null) {
+        // Show now playing info (title - artist)
+        if (state.mediaTitle != null || state.mediaArtist != null) {
             binding.nowPlayingText.visibility = android.view.View.VISIBLE
             val nowPlaying = buildString {
-                append(state.mediaTitle)
-                state.mediaArtist?.let { append(" - $it") }
+                state.mediaTitle?.let { append(it) }
+                state.mediaArtist?.let {
+                    if (isNotEmpty()) append(" - ")
+                    append(it)
+                }
             }
-            binding.nowPlayingText.text = nowPlaying
+            binding.nowPlayingText.text = nowPlaying.ifEmpty { "Unknown" }
         } else {
             binding.nowPlayingText.visibility = android.view.View.GONE
+        }
+
+        // Show URL
+        if (!state.mediaUrl.isNullOrEmpty()) {
+            binding.nowPlayingUrlText.visibility = android.view.View.VISIBLE
+            binding.nowPlayingUrlText.text = state.mediaUrl
+        } else {
+            binding.nowPlayingUrlText.visibility = android.view.View.GONE
         }
     }
 

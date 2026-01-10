@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HA Media Player</string>
+    <string name="app_name">Android Media Player</string>
     <string name="device_name">Device Name</string>
     <string name="device_name_hint">Living Room Speaker</string>
     <string name="server_port">Server Port</string>
