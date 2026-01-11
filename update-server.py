@@ -238,6 +238,18 @@ def get_device_app_name(device):
         return None
 
 
+def get_device_player_state(ip):
+    """Get the player state from the app's API."""
+    import urllib.request
+    try:
+        url = f"http://{ip}:8765/state"
+        req = urllib.request.Request(url, headers={'User-Agent': 'UpdateServer'})
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
 def get_device_serial(device):
     """Get device serial number for deduplication."""
     result = run_adb("-s", device, "shell", "getprop", "ro.serialno")
@@ -313,6 +325,15 @@ WEB_UI_HTML = """
         }
         .track-list { max-height: 100px; overflow-y: auto; margin-top: 10px; }
         .track-item { padding: 5px; background: #0f0f1a; margin: 3px 0; border-radius: 4px; font-size: 0.85em; }
+        .player-state { background: #0f0f1a; padding: 12px; border-radius: 8px; margin: 10px 0; }
+        .player-state .state-label { font-size: 0.8em; color: #888; text-transform: uppercase; }
+        .player-state .now-playing { color: #00d4ff; font-size: 1.1em; margin: 5px 0; }
+        .player-state .artist { color: #aaa; font-size: 0.95em; }
+        .player-state .meta { display: flex; gap: 15px; margin-top: 8px; font-size: 0.85em; color: #666; }
+        .state-playing { border-left: 3px solid #48bb78; }
+        .state-paused { border-left: 3px solid #ecc94b; }
+        .state-idle { border-left: 3px solid #666; }
+        .state-buffering { border-left: 3px solid #4299e1; }
         .apk-info { margin-top: 20px; padding: 15px; background: #0f3460; border-radius: 8px; }
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
@@ -539,6 +560,15 @@ WEB_UI_HTML = """
             }
         }
 
+        async function fetchPlayerState(ip) {
+            try {
+                const resp = await fetch(`/api/player-state/${ip}`);
+                return await resp.json();
+            } catch (e) {
+                return null;
+            }
+        }
+
         async function fetchAllDevices() {
             try {
                 // Fetch both ADB and app devices
@@ -548,6 +578,12 @@ WEB_UI_HTML = """
                 ]);
                 const adbDevices = await adbResp.json();
                 const appDevices = await appResp.json();
+
+                // Build lookup of existing player states to preserve them
+                const existingStates = {};
+                for (const d of allDevices) {
+                    if (d.ip && d.player_state) existingStates[d.ip] = d.player_state;
+                }
 
                 // Merge by IP address
                 const merged = {};
@@ -563,7 +599,8 @@ WEB_UI_HTML = """
                         adb_connected: true,
                         app_connected: false,
                         version: null,
-                        last_seen: null
+                        last_seen: null,
+                        player_state: ip ? existingStates[ip] || null : null
                     };
                 }
                 for (const [id, d] of Object.entries(appDevices)) {
@@ -573,6 +610,7 @@ WEB_UI_HTML = """
                         merged[ip].version = d.app_version;
                         merged[ip].last_seen = d.last_seen;
                         merged[ip].app_connected = true;
+                        if (!merged[ip].player_state) merged[ip].player_state = existingStates[ip] || null;
                     } else {
                         const key = ip || id;
                         merged[key] = {
@@ -583,7 +621,8 @@ WEB_UI_HTML = """
                             adb_connected: false,
                             app_connected: true,
                             version: d.app_version,
-                            last_seen: d.last_seen
+                            last_seen: d.last_seen,
+                            player_state: ip ? existingStates[ip] || null : null
                         };
                     }
                 }
@@ -591,7 +630,114 @@ WEB_UI_HTML = """
                 document.getElementById('device-count').textContent = allDevices.length;
                 renderDevices();
                 updateDeviceFilter();
+
+                // Fetch player state for each device with an IP (update in-place, don't re-render)
+                for (const d of allDevices) {
+                    if (d.ip) {
+                        const deviceId = 'device-' + (d.ip || d.name).replace(/[^a-zA-Z0-9]/g, '-');
+                        fetchPlayerState(d.ip).then(state => {
+                            if (state && !state.error) {
+                                d.player_state = state;
+                                const card = document.getElementById(deviceId);
+                                if (card) {
+                                    updatePlayerStateInPlace(card, state);
+                                }
+                            }
+                        });
+                    }
+                }
             } catch (e) { console.error('Failed to fetch devices:', e); }
+        }
+
+        function formatTime(sec) {
+            if (sec === null || sec === undefined || sec < 0) return '--:--';
+            const s = Math.floor(sec);
+            const m = Math.floor(s / 60);
+            const secs = s % 60;
+            return `${m}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function getPlayerStateData(ps) {
+            if (!ps) return { state: 'idle', stateLabel: 'Idle', title: '', artist: '', time: '--:--', volume: '--' };
+            const state = ps.state || 'idle';
+            const stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+            let title = ps.mediaTitle || ps.title || '';
+            let artist = ps.mediaArtist || ps.artist || '';
+            if (artist.startsWith('media_player.')) artist = '';
+            const positionMs = ps.mediaPosition || ps.position || 0;
+            const durationMs = ps.mediaDuration || ps.duration || null;
+            const position = positionMs / 1000;
+            const duration = durationMs ? durationMs / 1000 : null;
+            const volume = ps.volume !== undefined ? Math.round(ps.volume * 100) + '%' : '--';
+            const muted = ps.muted ? ' (Muted)' : '';
+            const url = ps.mediaUrl || '';
+            if (!title && url) {
+                const parts = url.split('/');
+                title = decodeURIComponent(parts[parts.length - 1]).replace(/\.[^.]+$/, '');
+            }
+            const time = duration ? `${formatTime(position)} / ${formatTime(duration)}` : formatTime(position);
+            return { state, stateLabel, title, artist, time, volume: volume + muted };
+        }
+
+        function renderPlayerState(ps) {
+            const d = getPlayerStateData(ps);
+            // Always render all data-field elements for in-place updates
+            const showMeta = d.state !== 'idle' || d.title;
+            return `<div class="player-state state-${d.state}">
+                <span class="state-label" data-field="state">${d.stateLabel}</span>
+                <div class="now-playing" data-field="title" ${d.title ? '' : 'style="display:none"'}>${d.title || ''}</div>
+                <div class="artist" data-field="artist" ${d.artist ? '' : 'style="display:none"'}>${d.artist || ''}</div>
+                <div class="meta" data-field="meta" ${showMeta ? '' : 'style="display:none"'}>
+                    <span data-field="time">Time: ${d.time}</span>
+                    <span data-field="volume">Vol: ${d.volume}</span>
+                </div>
+                <div data-field="no-media" style="color:#666;margin-top:5px;${showMeta ? 'display:none' : ''}">No media loaded</div>
+            </div>`;
+        }
+
+        function updatePlayerStateInPlace(container, ps) {
+            const d = getPlayerStateData(ps);
+            const playerDiv = container.querySelector('.player-state');
+            if (!playerDiv) return false;
+
+            // Update state class
+            playerDiv.className = 'player-state state-' + d.state;
+
+            // Update individual fields
+            const stateEl = playerDiv.querySelector('[data-field="state"]');
+            const titleEl = playerDiv.querySelector('[data-field="title"]');
+            const artistEl = playerDiv.querySelector('[data-field="artist"]');
+            const timeEl = playerDiv.querySelector('[data-field="time"]');
+            const volumeEl = playerDiv.querySelector('[data-field="volume"]');
+            const metaEl = playerDiv.querySelector('[data-field="meta"]');
+            const noMediaEl = playerDiv.querySelector('[data-field="no-media"]');
+
+            if (stateEl && stateEl.textContent !== d.stateLabel) stateEl.textContent = d.stateLabel;
+            if (titleEl) {
+                if (d.title) {
+                    if (titleEl.textContent !== d.title) titleEl.textContent = d.title;
+                    titleEl.style.display = '';
+                } else {
+                    titleEl.style.display = 'none';
+                }
+            }
+            if (artistEl) {
+                if (d.artist) {
+                    if (artistEl.textContent !== d.artist) artistEl.textContent = d.artist;
+                    artistEl.style.display = '';
+                } else {
+                    artistEl.style.display = 'none';
+                }
+            }
+            if (timeEl) timeEl.textContent = 'Time: ' + d.time;
+            if (volumeEl) volumeEl.textContent = 'Vol: ' + d.volume;
+
+            // Show/hide meta vs no-media based on state
+            const showMeta = d.state !== 'idle' || d.title;
+            if (metaEl) metaEl.style.display = showMeta ? '' : 'none';
+            if (noMediaEl) noMediaEl.style.display = showMeta ? 'none' : '';
+
+            return true;
         }
 
         function renderDevices() {
@@ -600,31 +746,79 @@ WEB_UI_HTML = """
                 container.innerHTML = '<div class="card"><p>No devices found. Click "Add Device" to pair a tablet via ADB.</p></div>';
                 return;
             }
-            container.innerHTML = allDevices.map(d => {
-                const isOnline = d.app_connected && d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 300000;
-                return `
-                <div class="adb-device" style="flex-direction:column;align-items:stretch;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <div>
-                            <strong style="font-size:1.1em;">${d.name}</strong>
-                            ${d.is_device_owner ? '<span class="status-badge status-owner">Silent Updates</span>' : ''}
-                            ${isOnline ? '<span class="status-badge status-online">Online</span>' : ''}
-                            ${d.adb_connected ? '<span class="status-badge" style="background:#4fc3f733;color:#4fc3f7;">ADB</span>' : ''}
+
+            // Track which device IDs we've seen
+            const seenIds = new Set();
+
+            allDevices.forEach(d => {
+                const deviceId = 'device-' + (d.ip || d.name).replace(/[^a-zA-Z0-9]/g, '-');
+                seenIds.add(deviceId);
+
+                let card = document.getElementById(deviceId);
+                const isOnline = d.player_state || (d.app_connected && d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 300000);
+
+                // Build static content hash (excludes player state time/position)
+                const badges =
+                    (d.is_device_owner ? '<span class="status-badge status-owner">Silent Updates</span>' : '') +
+                    (isOnline ? '<span class="status-badge status-online">Online</span>' : '') +
+                    (d.adb_connected ? '<span class="status-badge" style="background:#4fc3f733;color:#4fc3f7;">ADB</span>' : '');
+                const info =
+                    (d.ip ? 'IP: ' + d.ip + ':8765' : '') +
+                    (d.version ? ' | Version: ' + d.version : '') +
+                    (d.adb_address && d.adb_address !== d.ip + ':41297' ? ' | ADB: ' + d.adb_address : '');
+                const buttons =
+                    (d.adb_connected ? `<button class="btn btn-small" onclick="pushUpdate('${d.adb_address}')">Push Update (ADB)</button>` : '') +
+                    (d.is_device_owner && d.ip ? `<button class="btn btn-small btn-success" onclick="triggerOtaUpdate('${d.ip}')">OTA Update</button>` : '') +
+                    (d.adb_connected && !d.is_device_owner ? `<button class="btn btn-small btn-secondary" onclick="setDeviceOwner('${d.adb_address}')">Enable Silent Updates</button>` : '') +
+                    (d.adb_connected ? `<button class="btn btn-small btn-secondary" onclick="disablePlayProtect('${d.adb_address}')">Disable Protect</button>` : '');
+
+                // Static hash excludes time-varying player state
+                const psData = getPlayerStateData(d.player_state);
+                const staticHash = d.name + badges + info + buttons + psData.state + psData.title + psData.artist;
+
+                if (!card) {
+                    // Create new card
+                    card = document.createElement('div');
+                    card.id = deviceId;
+                    card.className = 'adb-device';
+                    card.style.cssText = 'flex-direction:column;align-items:stretch;';
+                    card.dataset.staticHash = staticHash;
+                    card.innerHTML = `
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <strong style="font-size:1.1em;">${d.name}</strong>
+                                ${badges}
+                            </div>
                         </div>
-                    </div>
-                    <div style="font-size:0.85em;color:#888;margin:8px 0;">
-                        ${d.ip ? 'IP: ' + d.ip : ''}
-                        ${d.version ? ' | Version: ' + d.version : ''}
-                        ${d.adb_address && d.adb_address !== d.ip + ':41297' ? ' | ADB: ' + d.adb_address : ''}
-                    </div>
-                    <div style="display:flex;flex-wrap:wrap;gap:6px;">
-                        ${d.adb_connected ? `<button class="btn btn-small" onclick="pushUpdate('${d.adb_address}')">Push Update (ADB)</button>` : ''}
-                        ${d.is_device_owner && d.ip ? `<button class="btn btn-small btn-success" onclick="triggerOtaUpdate('${d.ip}')">OTA Update</button>` : ''}
-                        ${d.adb_connected && !d.is_device_owner ? `<button class="btn btn-small btn-secondary" onclick="setDeviceOwner('${d.adb_address}')">Enable Silent Updates</button>` : ''}
-                        ${d.adb_connected ? `<button class="btn btn-small btn-secondary" onclick="disablePlayProtect('${d.adb_address}')">Disable Protect</button>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
+                        <div style="font-size:0.85em;color:#888;margin:8px 0;">${info}</div>
+                        ${renderPlayerState(d.player_state)}
+                        <div style="display:flex;flex-wrap:wrap;gap:6px;">${buttons}</div>`;
+                    container.appendChild(card);
+                } else if (card.dataset.staticHash !== staticHash) {
+                    // Static content changed - rebuild card
+                    card.dataset.staticHash = staticHash;
+                    card.innerHTML = `
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <strong style="font-size:1.1em;">${d.name}</strong>
+                                ${badges}
+                            </div>
+                        </div>
+                        <div style="font-size:0.85em;color:#888;margin:8px 0;">${info}</div>
+                        ${renderPlayerState(d.player_state)}
+                        <div style="display:flex;flex-wrap:wrap;gap:6px;">${buttons}</div>`;
+                } else {
+                    // Only player state time/volume changed - update in place
+                    updatePlayerStateInPlace(card, d.player_state);
+                }
+            });
+
+            // Remove cards for devices that no longer exist
+            Array.from(container.children).forEach(child => {
+                if (child.id && child.id.startsWith('device-') && !seenIds.has(child.id)) {
+                    child.remove();
+                }
+            });
         }
 
         async function fetchLogs() {
@@ -723,6 +917,9 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
             self.handle_get_devices()
         elif path == "/api/adb/devices":
             self.handle_get_adb_devices()
+        elif path.startswith("/api/player-state/"):
+            ip = path.split("/")[-1]
+            self.handle_get_player_state(ip)
         elif path == "/" or path == "/ui":
             self.handle_web_ui()
         else:
@@ -834,6 +1031,18 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
             device_list = dict(devices)
 
         body = json.dumps(device_list).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", len(body))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_get_player_state(self, ip):
+        """Get player state from device."""
+        state = get_device_player_state(ip)
+        if state is None:
+            state = {"error": "Could not connect to device"}
+        body = json.dumps(state).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(body))

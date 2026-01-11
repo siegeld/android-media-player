@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Device check-in and heartbeat functionality
 - Track play history logging
 - Log filtering and search in web dashboard
+- **Real-time player state in web dashboard**
+  - Shows current track, artist, playback time, and volume for each device
+  - Flicker-free in-place DOM updates (only changed elements update)
 
 ### Changed
 - **Home Assistant Integration Architecture**
@@ -57,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed obsolete `version` attribute from docker-compose.yml
 
 ### Fixed
+- `/state` API now returns fresh position/duration from ExoPlayer (was returning stale cached values)
 - String index out of range error for radio stations with short titles
 - HA integration not updating state after WebSocket reconnect
 - REST API commands now send empty JSON `{}` instead of `null` for commands without parameters

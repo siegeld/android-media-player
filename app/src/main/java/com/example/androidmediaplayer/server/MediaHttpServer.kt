@@ -117,11 +117,24 @@ class MediaHttpServer(
                 ))
             }
 
-            // Get current state
+            // Get current state with fresh position
             get("/state") {
                 val clientIp = call.request.local.remoteHost
                 AppLog.d(TAG, "GET /state from $clientIp")
-                call.respond(service.playerState.value)
+                // Return state with fresh position/duration from player (must access ExoPlayer on Main thread)
+                val freshState = kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    val state = service.playerState.value
+                    val position = service.getPosition()
+                    val duration = service.getDuration()
+                    // ExoPlayer returns TIME_UNSET (Long.MIN_VALUE + 1) when unknown - convert to null
+                    val validPosition = if (position >= 0) position else null
+                    val validDuration = if (duration > 0) duration else null
+                    state.copy(
+                        mediaPosition = validPosition,
+                        mediaDuration = validDuration
+                    )
+                }
+                call.respond(freshState)
             }
 
             // Play media
