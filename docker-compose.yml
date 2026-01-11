@@ -7,8 +7,8 @@ services:
     volumes:
       # Mount the APK output directory so the server always serves the latest build
       - ./app/build/outputs/apk/debug:/app/app/build/outputs/apk/debug:ro
-      # Mount the build.gradle.kts for version detection
-      - ./app/build.gradle.kts:/app/app/build.gradle.kts:ro
+      # Mount the build-tools for aapt2 (reads version directly from APK files)
+      - ./android-sdk/build-tools:/app/android-sdk/build-tools:ro
       # Mount the ADB platform-tools for device management
       - ./android-sdk/platform-tools:/app/android-sdk/platform-tools:ro
       # Persist logs and state data

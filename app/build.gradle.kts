@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.androidmediaplayer"
         minSdk = 29
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 8
+        versionName = "1.7"
     }
 
     buildTypes {
@@ -71,6 +71,7 @@ dependencies {
     implementation("io.ktor:ktor-server-netty:2.3.7")
     implementation("io.ktor:ktor-server-websockets:2.3.7")
     implementation("io.ktor:ktor-server-content-negotiation:2.3.7")
+    implementation("io.ktor:ktor-server-cors:2.3.7")
     implementation("io.ktor:ktor-serialization-gson:2.3.7")
 
     // Coroutines

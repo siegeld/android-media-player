@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7] - 2026-01-11
+
+### Added
+- **Web Dashboard Playback Controls**
+  - Test Stream button plays Radio Paradise (320k AAC) for testing
+  - Play/Pause buttons with dynamic state (shows Pause when playing, Play when paused)
+  - Stop button for each device
+- **CORS Support**
+  - HTTP server now includes CORS headers for cross-origin requests
+  - Enables web dashboard to control players directly
+
+### Changed
+- **Update Server Improvements**
+  - Scans all APK files in directory and uses highest version
+  - No container restart needed when new APK is deployed
+  - Version read directly from APK via aapt2 (no stale file issues)
+- **Dynamic Version Reporting**
+  - `/` endpoint now returns actual app version from PackageManager
+  - No longer hardcoded to "1.0"
+
+### Fixed
+- **Background Playback Stability**
+  - Fixed activity unbinding in `onStop()` that could affect playback
+  - Service now stays bound until Activity is destroyed
+  - Prevents watchdog rebind dance when screen turns off
+
+---
+
 ## [Unreleased]
 
 ### Added

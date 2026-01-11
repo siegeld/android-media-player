@@ -10,6 +10,7 @@ import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -58,6 +59,13 @@ class MediaHttpServer(
                 gson {
                     setPrettyPrinting()
                 }
+            }
+            install(CORS) {
+                anyHost()
+                allowHeader(HttpHeaders.ContentType)
+                allowMethod(HttpMethod.Get)
+                allowMethod(HttpMethod.Post)
+                allowMethod(HttpMethod.Options)
             }
             install(WebSockets) {
                 pingPeriod = Duration.ofSeconds(15)
@@ -109,10 +117,11 @@ class MediaHttpServer(
             get("/") {
                 val clientIp = call.request.local.remoteHost
                 AppLog.d(TAG, "GET / from $clientIp - returning device info")
+                val packageInfo = service.packageManager.getPackageInfo(service.packageName, 0)
                 call.respond(mapOf(
                     "name" to deviceName,
                     "type" to "android_media_player",
-                    "version" to "1.0",
+                    "version" to packageInfo.versionName,
                     "capabilities" to listOf("play", "pause", "stop", "volume", "seek")
                 ))
             }

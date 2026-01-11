@@ -620,9 +620,17 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         AppLog.d(TAG, "onStop, serviceBound=$serviceBound")
+        // Don't unbind here - the foreground service should continue running
+        // when the Activity is in the background. Only unbind in onDestroy.
+    }
+
+    override fun onDestroy() {
+        AppLog.d(TAG, "onDestroy, serviceBound=$serviceBound")
+        watchdogJob?.cancel()
         if (serviceBound) {
             unbindService(serviceConnection)
             serviceBound = false
         }
+        super.onDestroy()
     }
 }

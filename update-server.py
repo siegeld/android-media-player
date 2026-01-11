@@ -21,7 +21,8 @@ from urllib.parse import parse_qs, urlparse
 import threading
 
 PORT = 9742
-APK_PATH = Path(__file__).parent / "app/build/outputs/apk/debug/app-debug.apk"
+APK_DIR = Path(__file__).parent / "app/build/outputs/apk/debug"
+APK_PATH = APK_DIR / "app-debug.apk"  # Default path for backwards compatibility
 DATA_DIR = Path(__file__).parent / "data"
 LOG_FILE = DATA_DIR / "app_logs.jsonl"
 STATE_FILE = DATA_DIR / "state.json"
@@ -38,9 +39,9 @@ devices = {}  # device_id -> device info
 adb_devices = {}  # ip:port -> connection info
 
 
-def get_apk_version():
-    """Extract version info from APK using aapt or aapt2."""
-    if not APK_PATH.exists():
+def get_apk_version_from_file(apk_path):
+    """Extract version info from a single APK using aapt or aapt2."""
+    if not apk_path.exists():
         return None, None
 
     # Try aapt2 first, then aapt
@@ -53,7 +54,7 @@ def get_apk_version():
         if aapt.exists():
             try:
                 result = subprocess.run(
-                    [str(aapt), "dump", "badging", str(APK_PATH)],
+                    [str(aapt), "dump", "badging", str(apk_path)],
                     capture_output=True, text=True
                 )
                 output = result.stdout
@@ -78,6 +79,37 @@ def get_apk_version():
     except Exception as e:
         print(f"Error reading build.gradle.kts: {e}")
         return 1, "1.0"
+
+
+def get_best_apk():
+    """Find the APK with the highest version code. Returns (path, version_code, version_name)."""
+    if not APK_DIR.exists():
+        return None, None, None
+
+    best_apk = None
+    best_version_code = -1
+    best_version_name = None
+
+    # Scan all APK files in the directory
+    for apk_file in APK_DIR.glob("*.apk"):
+        version_code, version_name = get_apk_version_from_file(apk_file)
+        if version_code is not None and version_code > best_version_code:
+            best_version_code = version_code
+            best_version_name = version_name
+            best_apk = apk_file
+
+    if best_apk is None:
+        return None, None, None
+
+    return best_apk, best_version_code, best_version_name
+
+
+def get_apk_version():
+    """Get version info from the best available APK."""
+    apk_path, version_code, version_name = get_best_apk()
+    if apk_path is None:
+        return None, None
+    return version_code, version_name
 
 
 def save_log_entry(entry):
@@ -148,11 +180,12 @@ def adb_connect(ip, port):
 
 def adb_push_update(device):
     """Push APK update to device via ADB."""
-    if not APK_PATH.exists():
+    apk_path, version_code, version_name = get_best_apk()
+    if apk_path is None:
         return {"success": False, "message": "APK not found"}
 
     # Install the APK
-    result = run_adb("-s", device, "install", "-r", str(APK_PATH), timeout=120)
+    result = run_adb("-s", device, "install", "-r", str(apk_path), timeout=120)
     if result["success"]:
         # Start the app
         run_adb("-s", device, "shell", "am", "start", "-n", f"{PACKAGE}/.MainActivity")
@@ -560,6 +593,59 @@ WEB_UI_HTML = """
             }
         }
 
+        async function playTestStream(ip) {
+            showToast('Starting test stream...');
+            try {
+                const resp = await fetch(`http://${ip}:8765/play`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        url: 'http://stream.radioparadise.com/aac-320',
+                        title: 'Radio Paradise',
+                        artist: 'Test Stream (320k AAC)'
+                    })
+                });
+                const result = await resp.json();
+                showToast(result.success ? 'Playing test stream' : result.message, !result.success);
+                fetchAllDevices();
+            } catch (e) {
+                showToast('Error: ' + e.message, true);
+            }
+        }
+
+        async function stopPlayback(ip) {
+            try {
+                const resp = await fetch(`http://${ip}:8765/stop`, { method: 'POST' });
+                const result = await resp.json();
+                showToast(result.success ? 'Stopped' : result.message, !result.success);
+                fetchAllDevices();
+            } catch (e) {
+                showToast('Error: ' + e.message, true);
+            }
+        }
+
+        async function pausePlayback(ip) {
+            try {
+                const resp = await fetch(`http://${ip}:8765/pause`, { method: 'POST' });
+                const result = await resp.json();
+                showToast(result.success ? 'Paused' : result.message, !result.success);
+                fetchAllDevices();
+            } catch (e) {
+                showToast('Error: ' + e.message, true);
+            }
+        }
+
+        async function resumePlayback(ip) {
+            try {
+                const resp = await fetch(`http://${ip}:8765/play`, { method: 'POST' });
+                const result = await resp.json();
+                showToast(result.success ? 'Playing' : result.message, !result.success);
+                fetchAllDevices();
+            } catch (e) {
+                showToast('Error: ' + e.message, true);
+            }
+        }
+
         async function fetchPlayerState(ip) {
             try {
                 const resp = await fetch(`/api/player-state/${ip}`);
@@ -766,15 +852,21 @@ WEB_UI_HTML = """
                     (d.ip ? 'IP: ' + d.ip + ':8765' : '') +
                     (d.version ? ' | Version: ' + d.version : '') +
                     (d.adb_address && d.adb_address !== d.ip + ':41297' ? ' | ADB: ' + d.adb_address : '');
+                const isPlaying = d.player_state && d.player_state.state === 'playing';
+                const isPaused = d.player_state && d.player_state.state === 'paused';
                 const buttons =
+                    (d.ip ? `<button class="btn btn-small" onclick="playTestStream('${d.ip}')">Test Stream</button>` : '') +
+                    (d.ip && isPlaying ? `<button class="btn btn-small btn-secondary" onclick="pausePlayback('${d.ip}')">Pause</button>` : '') +
+                    (d.ip && isPaused ? `<button class="btn btn-small btn-success" onclick="resumePlayback('${d.ip}')">Play</button>` : '') +
+                    (d.ip ? `<button class="btn btn-small btn-danger" onclick="stopPlayback('${d.ip}')">Stop</button>` : '') +
                     (d.adb_connected ? `<button class="btn btn-small" onclick="pushUpdate('${d.adb_address}')">Push Update (ADB)</button>` : '') +
                     (d.is_device_owner && d.ip ? `<button class="btn btn-small btn-success" onclick="triggerOtaUpdate('${d.ip}')">OTA Update</button>` : '') +
                     (d.adb_connected && !d.is_device_owner ? `<button class="btn btn-small btn-secondary" onclick="setDeviceOwner('${d.adb_address}')">Enable Silent Updates</button>` : '') +
                     (d.adb_connected ? `<button class="btn btn-small btn-secondary" onclick="disablePlayProtect('${d.adb_address}')">Disable Protect</button>` : '');
 
-                // Static hash excludes time-varying player state
+                // Static hash includes play state for button updates
                 const psData = getPlayerStateData(d.player_state);
-                const staticHash = d.name + badges + info + buttons + psData.state + psData.title + psData.artist;
+                const staticHash = d.name + badges + info + isPlaying + isPaused + psData.state + psData.title + psData.artist;
 
                 if (!card) {
                     // Create new card
@@ -958,17 +1050,17 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
 
     def handle_version(self):
         """Return version info as JSON."""
-        version_code, version_name = get_apk_version()
+        apk_path, version_code, version_name = get_best_apk()
 
-        if not APK_PATH.exists():
+        if apk_path is None:
             response = {"error": "APK not found", "available": False}
         else:
             response = {
                 "available": True,
                 "versionCode": version_code,
                 "versionName": version_name,
-                "size": APK_PATH.stat().st_size,
-                "filename": "app-debug.apk"
+                "size": apk_path.stat().st_size,
+                "filename": apk_path.name
             }
 
         body = json.dumps(response).encode()
@@ -979,19 +1071,21 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def handle_apk(self):
-        """Serve the APK file."""
-        if not APK_PATH.exists():
+        """Serve the APK file with the highest version."""
+        apk_path, version_code, version_name = get_best_apk()
+
+        if apk_path is None:
             self.send_error(404, "APK not found")
             return
 
-        file_size = APK_PATH.stat().st_size
+        file_size = apk_path.stat().st_size
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.android.package-archive")
         self.send_header("Content-Length", file_size)
-        self.send_header("Content-Disposition", "attachment; filename=app-debug.apk")
+        self.send_header("Content-Disposition", f"attachment; filename={apk_path.name}")
         self.end_headers()
 
-        with open(APK_PATH, "rb") as f:
+        with open(apk_path, "rb") as f:
             chunk_size = 1024 * 1024
             while True:
                 chunk = f.read(chunk_size)
@@ -1310,15 +1404,14 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 def main():
     print(f"Starting update/monitoring server on port {PORT}")
-    print(f"APK path: {APK_PATH}")
+    print(f"APK directory: {APK_DIR}")
 
-    version_code, version_name = get_apk_version()
-    print(f"Current APK version: {version_name} (code: {version_code})")
-
-    if APK_PATH.exists():
-        print(f"APK size: {APK_PATH.stat().st_size:,} bytes")
+    apk_path, version_code, version_name = get_best_apk()
+    if apk_path:
+        print(f"Best APK: {apk_path.name} - version {version_name} (code: {version_code})")
+        print(f"APK size: {apk_path.stat().st_size:,} bytes")
     else:
-        print("WARNING: APK not found! Build the app first.")
+        print("WARNING: No APK found! Build the app first.")
 
     print(f"\nEndpoints:")
     print(f"  http://0.0.0.0:{PORT}/         - Web UI (monitoring dashboard)")
