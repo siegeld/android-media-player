@@ -5,6 +5,8 @@ from datetime import datetime
 import logging
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from homeassistant.components.media_player import (
     BrowseMedia,
     MediaPlayerEntity,
@@ -18,6 +20,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_NAME
 from .coordinator import AndroidMediaPlayerCoordinator
@@ -51,11 +54,16 @@ async def async_setup_entry(
     async_add_entities([AndroidMediaPlayerEntity(coordinator, entry)])
 
 
-class AndroidMediaPlayerEntity(MediaPlayerEntity):
-    """Representation of an Android Media Player."""
+class AndroidMediaPlayerEntity(CoordinatorEntity[AndroidMediaPlayerCoordinator], MediaPlayerEntity):
+    """Representation of an Android Media Player.
+
+    Uses CoordinatorEntity to properly integrate with HA's DataUpdateCoordinator
+    for state propagation to all subscribers including Music Assistant.
+    """
 
     _attr_has_entity_name = True
     _attr_name = None
+    _attr_device_class = "speaker"
 
     def __init__(
         self,
@@ -63,7 +71,7 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         entry: ConfigEntry,
     ) -> None:
         """Initialize the media player."""
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{entry.data[CONF_HOST]}_{entry.data[CONF_PORT]}"
         self._device_name = entry.data.get(CONF_NAME, "Android Media Player")
@@ -74,7 +82,6 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
             model="Media Player",
             sw_version="1.0",
         )
-        self._remove_listener: callable | None = None
 
         # Queue management
         self._queue: list[dict] = []  # List of {url, title, artist}
@@ -101,6 +108,8 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
             | MediaPlayerEntityFeature.SEEK
             | MediaPlayerEntityFeature.NEXT_TRACK
             | MediaPlayerEntityFeature.PREVIOUS_TRACK
+            | MediaPlayerEntityFeature.TURN_ON
+            | MediaPlayerEntityFeature.TURN_OFF
         )
 
     @property
@@ -114,33 +123,39 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         if not self.coordinator.available:
             return MediaPlayerState.OFF
 
-        state_str = self.coordinator.state.get("state", "idle")
+        data = self.coordinator.data or {}
+        state_str = data.get("state", "idle")
         return STATE_MAP.get(state_str, MediaPlayerState.IDLE)
 
     @property
     def volume_level(self) -> float | None:
         """Return the volume level (0..1)."""
-        return self.coordinator.state.get("volume", 1.0)
+        data = self.coordinator.data or {}
+        return data.get("volume", 1.0)
 
     @property
     def is_volume_muted(self) -> bool | None:
         """Return True if volume is muted."""
-        return self.coordinator.state.get("muted", False)
+        data = self.coordinator.data or {}
+        return data.get("muted", False)
 
     @property
     def media_title(self) -> str | None:
         """Return the title of current playing media."""
-        return self.coordinator.state.get("mediaTitle")
+        data = self.coordinator.data or {}
+        return data.get("mediaTitle")
 
     @property
     def media_artist(self) -> str | None:
         """Return the artist of current playing media."""
-        return self.coordinator.state.get("mediaArtist")
+        data = self.coordinator.data or {}
+        return data.get("mediaArtist")
 
     @property
     def media_duration(self) -> int | None:
         """Return the duration of current playing media in seconds."""
-        duration_ms = self.coordinator.state.get("mediaDuration")
+        data = self.coordinator.data or {}
+        duration_ms = data.get("mediaDuration")
         if duration_ms:
             return duration_ms // 1000
         return None
@@ -148,7 +163,8 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
     @property
     def media_position(self) -> int | None:
         """Return the position of current playing media in seconds."""
-        position_ms = self.coordinator.state.get("mediaPosition")
+        data = self.coordinator.data or {}
+        position_ms = data.get("mediaPosition")
         if position_ms:
             return position_ms // 1000
         return None
@@ -156,20 +172,23 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
     @property
     def media_content_type(self) -> MediaType | None:
         """Return the content type of current playing media."""
-        if self.coordinator.state.get("mediaUrl"):
+        data = self.coordinator.data or {}
+        if data.get("mediaUrl"):
             return MediaType.MUSIC
         return None
 
     @property
     def media_content_id(self) -> str | None:
         """Return the content ID of current playing media."""
-        return self.coordinator.state.get("mediaUrl")
+        data = self.coordinator.data or {}
+        return data.get("mediaUrl")
 
     @property
     def media_position_updated_at(self) -> datetime | None:
         """Return when position was last updated."""
-        if self.coordinator.state.get("mediaPosition") is not None:
-            return datetime.now()
+        data = self.coordinator.data or {}
+        if data.get("mediaPosition") is not None:
+            return dt_util.utcnow()
         return None
 
     async def async_added_to_hass(self) -> None:
@@ -179,36 +198,39 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
             "Android Media Player '%s' added to Home Assistant",
             self._device_name
         )
-        self._remove_listener = self.coordinator.add_listener(
-            self._handle_coordinator_update
-        )
 
     async def async_will_remove_from_hass(self) -> None:
         """Run when entity will be removed from hass."""
+        await super().async_will_remove_from_hass()
         _LOGGER.info(
             "Android Media Player '%s' being removed from Home Assistant",
             self._device_name
         )
-        if self._remove_listener:
-            self._remove_listener()
 
     async def async_media_play(self) -> None:
         """Send play command."""
-        _LOGGER.debug("async_media_play called for '%s'", self._device_name)
-        result = await self.coordinator.async_send_command("play")
-        if not result:
+        _LOGGER.debug("Play command for '%s'", self._device_name)
+        if not await self.coordinator.async_send_command("play"):
             _LOGGER.warning("Failed to send play command to '%s'", self._device_name)
 
     async def async_media_pause(self) -> None:
         """Send pause command."""
-        _LOGGER.debug("async_media_pause called for '%s'", self._device_name)
-        result = await self.coordinator.async_send_command("pause")
-        if not result:
+        _LOGGER.debug("Pause command for '%s'", self._device_name)
+        if not await self.coordinator.async_send_command("pause"):
             _LOGGER.warning("Failed to send pause command to '%s'", self._device_name)
+
+    async def async_turn_on(self) -> None:
+        """Turn on the player (no-op, always on when available)."""
+        pass
+
+    async def async_turn_off(self) -> None:
+        """Turn off the player by stopping playback."""
+        await self.async_media_stop()
 
     async def async_media_play_pause(self) -> None:
         """Toggle play/pause."""
-        current_state = self.coordinator.state.get("state", "idle")
+        data = self.coordinator.data or {}
+        current_state = data.get("state", "idle")
         _LOGGER.debug("async_media_play_pause called for '%s', current state: %s", self._device_name, current_state)
         if current_state == "playing":
             await self.async_media_pause()
@@ -269,17 +291,12 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
         self, media_type: MediaType | str, media_id: str, **kwargs: Any
     ) -> None:
         """Play a piece of media."""
-        # Log all kwargs for debugging - use INFO temporarily to ensure we see it
-        _LOGGER.info("async_play_media FULL kwargs: %s", kwargs)
-
-        # Extract metadata from various possible locations
         extra = kwargs.get("extra", {})
         title = extra.get("title")
         artist = extra.get("artist")
-
-        # Check enqueue mode
         enqueue = kwargs.get("enqueue")
-        _LOGGER.info(
+
+        _LOGGER.debug(
             "async_play_media for '%s': type=%s, media_id=%s, enqueue=%s",
             self._device_name, media_type, media_id, enqueue
         )
@@ -297,30 +314,15 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
                             self.hass, media_id
                         )
                         if browse_result:
-                            _LOGGER.info(
-                                "Got browse metadata: title=%s, media_class=%s, thumbnail=%s",
+                            _LOGGER.debug(
+                                "Got browse metadata: title=%s, media_class=%s",
                                 browse_result.title,
-                                getattr(browse_result, 'media_class', None),
-                                getattr(browse_result, 'thumbnail', None)
+                                getattr(browse_result, 'media_class', None)
                             )
                             if browse_result.title:
                                 title = browse_result.title
-                            # Try to get artist from media_content_id path
-                            # Format: media-source://dlna_dms/server/:parentId/:itemId
-                            if not artist:
-                                content_id = getattr(browse_result, 'media_content_id', '') or media_id
-                                # Try to get parent folder info for artist/album
-                                parts = content_id.split('/')
-                                _LOGGER.debug("media_content_id parts: %s", parts)
                     except Exception as browse_err:
                         _LOGGER.debug("Could not browse media for metadata: %s", browse_err)
-
-                # Log ALL available browse_result attributes for debugging
-                if browse_result:
-                    _LOGGER.info(
-                        "BrowseMedia ALL attrs: %s",
-                        {k: getattr(browse_result, k, None) for k in dir(browse_result) if not k.startswith('_')}
-                    )
 
                 # Now resolve to playable URL
                 sourced_media = await media_source.async_resolve_media(
@@ -384,15 +386,13 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
 
         # Handle enqueue modes
         if enqueue == "add":
-            # Add to end of queue
             self._queue.append(queue_item)
-            _LOGGER.info("Added to queue: %s (queue size: %d)", title, len(self._queue))
+            _LOGGER.debug("Added to queue: %s (size: %d)", title, len(self._queue))
             return
         elif enqueue == "next":
-            # Add after current track
             insert_pos = self._queue_index + 1
             self._queue.insert(insert_pos, queue_item)
-            _LOGGER.info("Inserted at position %d: %s", insert_pos, title)
+            _LOGGER.debug("Inserted at position %d: %s", insert_pos, title)
             return
         elif enqueue == "replace":
             # Clear queue and play
@@ -403,9 +403,9 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
             self._queue = [queue_item]
             self._queue_index = 0
 
-        _LOGGER.info(
-            "Playing on '%s': url=%s, title=%s, artist=%s",
-            self._device_name, resolved_url, title, artist
+        _LOGGER.debug(
+            "Playing on '%s': title=%s, artist=%s",
+            self._device_name, title, artist
         )
 
         result = await self.coordinator.async_send_command(
@@ -457,17 +457,14 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
     async def async_media_next_track(self) -> None:
         """Play the next track in the queue."""
         if not self._queue or self._queue_index >= len(self._queue) - 1:
-            _LOGGER.warning(
-                "No next track available for '%s' (index=%d, queue size=%d). "
-                "Queue is populated when tracks are added with enqueue mode.",
-                self._device_name, self._queue_index, len(self._queue)
-            )
+            _LOGGER.debug("No next track available (index=%d, size=%d)",
+                         self._queue_index, len(self._queue))
             return
 
         self._queue_index += 1
         track = self._queue[self._queue_index]
-        _LOGGER.info("Playing next track %d/%d: %s",
-                    self._queue_index + 1, len(self._queue), track.get("title"))
+        _LOGGER.debug("Next track %d/%d: %s",
+                     self._queue_index + 1, len(self._queue), track.get("title"))
 
         await self.coordinator.async_send_command(
             "play",
@@ -479,13 +476,13 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
     async def async_media_previous_track(self) -> None:
         """Play the previous track in the queue."""
         if not self._queue or self._queue_index <= 0:
-            _LOGGER.debug("No previous track available (index=%d)", self._queue_index)
+            _LOGGER.debug("No previous track available")
             return
 
         self._queue_index -= 1
         track = self._queue[self._queue_index]
-        _LOGGER.info("Playing previous track %d/%d: %s",
-                    self._queue_index + 1, len(self._queue), track.get("title"))
+        _LOGGER.debug("Previous track %d/%d: %s",
+                     self._queue_index + 1, len(self._queue), track.get("title"))
 
         await self.coordinator.async_send_command(
             "play",
@@ -496,22 +493,25 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        state = self.coordinator.state.get("state")
+        """Handle updated data from the coordinator.
+
+        Adds custom logic for auto-advancing tracks while calling the base
+        implementation for proper state propagation.
+        """
+        data = self.coordinator.data or {}
+        state = data.get("state")
         _LOGGER.debug(
-            "Entity '%s' update: state=%s (prev=%s), queue=%d/%d, user_stopped=%s",
-            self._device_name, state, self._previous_state,
-            self._queue_index + 1, len(self._queue), self._user_stopped
+            "State update for '%s': %s -> %s",
+            self._device_name, self._previous_state, state
         )
 
         # Auto-advance to next track when track ends naturally
-        # Only if: was playing -> now idle, user didn't stop, and more tracks in queue
         if (state == "idle" and
             self._previous_state == "playing" and
             not self._user_stopped and
             self._queue and
             self._queue_index < len(self._queue) - 1):
-            _LOGGER.info("Track ended naturally, advancing to next track...")
+            _LOGGER.debug("Track ended, advancing to next")
             self.hass.async_create_task(self.async_media_next_track())
 
         # Reset user_stopped flag when playback starts
@@ -519,4 +519,5 @@ class AndroidMediaPlayerEntity(MediaPlayerEntity):
             self._user_stopped = False
 
         self._previous_state = state
-        self.async_write_ha_state()
+        # Call parent implementation which handles async_write_ha_state()
+        super()._handle_coordinator_update()

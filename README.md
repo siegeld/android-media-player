@@ -60,12 +60,20 @@ This project provides a complete solution for turning any Android device into a 
 - Stream audio URLs from Home Assistant media sources
 - Browse Home Assistant media library (music, playlists, radio stations)
 - Full playback controls: play, pause, stop, volume, mute, seek
+- Queue management with next/previous track support
+- ICY metadata parsing for internet radio streams (artist - title)
 - Support for MP3, AAC, OGG, FLAC, WAV, and streaming formats (HLS, DASH)
+
+### Music Assistant Integration
+- Full compatibility with Music Assistant
+- Real-time state synchronization via DataUpdateCoordinator
+- Play/pause toggle support
+- Queue and enqueue modes (add, next, replace)
 
 ### Connectivity
 - Real-time state synchronization via WebSocket
 - REST API fallback for command delivery
-- Auto-reconnect with exponential backoff (5s → 10s → 20s → ... → 5min max)
+- Auto-reconnect with exponential backoff (1s → 2s → 4s → ... → 30s max)
 - Graceful handling of network interruptions
 
 ### Reliability
@@ -394,18 +402,25 @@ The Android app exposes these REST endpoints:
 
 ```json
 {
-  "state": "playing|paused|stopped|idle|error",
+  "state": "idle|playing|paused|buffering",
   "volume": 0.75,
   "muted": false,
-  "position": 45000,
-  "duration": 180000,
-  "title": "Song Title",
-  "artist": "Artist Name",
-  "album": "Album Name",
-  "url": "http://...",
+  "mediaPosition": 45000,
+  "mediaDuration": 180000,
+  "mediaTitle": "Song Title",
+  "mediaArtist": "Artist Name",
+  "mediaUrl": "http://...",
   "error": null
 }
 ```
+
+**States:**
+| State | Description |
+|-------|-------------|
+| `idle` | No media loaded or playback ended |
+| `playing` | Media is currently playing |
+| `paused` | Media is paused |
+| `buffering` | Media is buffering |
 
 ### WebSocket API
 
@@ -415,6 +430,7 @@ Connect to `/ws` for real-time updates and bidirectional communication.
 
 ```json
 {"command": "play", "url": "http://...", "title": "Song", "artist": "Artist"}
+{"command": "play"}
 {"command": "pause"}
 {"command": "stop"}
 {"command": "volume", "level": 0.5}
@@ -424,20 +440,27 @@ Connect to `/ws` for real-time updates and bidirectional communication.
 
 **Receiving State Updates:**
 
-The server pushes state updates whenever the player state changes:
+The server pushes the full state object whenever the player state changes:
 
 ```json
 {
-  "type": "state",
-  "data": {
-    "state": "playing",
-    "volume": 0.75,
-    "position": 45000,
-    "duration": 180000,
-    "title": "Song Title"
-  }
+  "state": "playing",
+  "volume": 0.75,
+  "muted": false,
+  "mediaPosition": 45000,
+  "mediaDuration": 180000,
+  "mediaTitle": "Song Title",
+  "mediaArtist": "Artist Name",
+  "mediaUrl": "http://..."
 }
 ```
+
+State updates are pushed on:
+- Playback state changes (play, pause, stop, idle)
+- Volume/mute changes
+- Media metadata changes
+- Seek position updates
+- ICY metadata from radio streams
 
 ---
 
@@ -478,11 +501,11 @@ The server pushes state updates whenever the player state changes:
 │                           Home Assistant                                 │
 │  ┌─────────────────────────────────────────────────────────────────────┐│
 │  │                  android_media_player integration                    ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────────┐ ││
-│  │  │ Config Flow  │  │ Coordinator  │  │ Media Player Entities      │ ││
-│  │  │ (Setup UI)   │  │ (WebSocket)  │  │ media_player.living_room   │ ││
-│  │  │              │  │              │  │ media_player.kitchen        │ ││
-│  │  └──────────────┘  └──────────────┘  └────────────────────────────┘ ││
+│  │  ┌──────────────┐  ┌───────────────────┐  ┌────────────────────────┐││
+│  │  │ Config Flow  │  │DataUpdateCoordinator│ │ CoordinatorEntity      │││
+│  │  │ (Setup UI)   │  │    (WebSocket)     │  │ media_player.living   │││
+│  │  │              │  │    + REST API      │  │ media_player.kitchen  │││
+│  │  └──────────────┘  └───────────────────┘  └────────────────────────┘││
 │  └─────────────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -693,8 +716,8 @@ android-media-player/
 │   ├── manifest.json                       # Integration manifest
 │   ├── __init__.py                         # Integration setup
 │   ├── config_flow.py                      # Configuration UI
-│   ├── coordinator.py                      # WebSocket connection manager
-│   ├── media_player.py                     # Media player entity
+│   ├── coordinator.py                      # DataUpdateCoordinator (WebSocket + REST)
+│   ├── media_player.py                     # CoordinatorEntity media player
 │   ├── const.py                            # Constants
 │   └── translations/en.json                # UI strings
 │
@@ -748,7 +771,7 @@ docker compose up -d
 
 MIT License
 
-Copyright (c) 2024
+Copyright (c) 2026
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

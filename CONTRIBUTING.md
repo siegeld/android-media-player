@@ -102,13 +102,22 @@ The integration is written in Python and follows Home Assistant conventions:
 |-----------|------------|
 | Language | Python 3.11+ |
 | Framework | Home Assistant Core |
-| Async | asyncio + aiohttp |
+| Async | asyncio + aiohttp + websockets |
 | Config | Config Flow |
+| Data Sync | DataUpdateCoordinator |
+| Entity Base | CoordinatorEntity |
+
+**Architecture:**
+- `coordinator.py` - Extends `DataUpdateCoordinator` for push-based state updates
+- `media_player.py` - Extends `CoordinatorEntity` + `MediaPlayerEntity`
+- Uses WebSocket for real-time state sync, REST API as fallback
+- Supports Music Assistant through proper HA patterns
 
 **Testing the integration:**
 1. Copy to HA config: `cp -r custom_components/android_media_player /config/custom_components/`
 2. Restart Home Assistant
 3. Check logs for errors: `tail -f /config/home-assistant.log`
+4. For Music Assistant testing, remove/re-add player in MA settings after changes
 
 ### Update Server Development
 
@@ -221,14 +230,28 @@ async def async_setup_entry(
 DOMAIN = "android_media_player"
 DEFAULT_PORT = 8765
 
-# Use docstrings
-class AndroidMediaPlayer(MediaPlayerEntity):
+# Use CoordinatorEntity pattern for Music Assistant compatibility
+class AndroidMediaPlayerEntity(
+    CoordinatorEntity[AndroidMediaPlayerCoordinator],
+    MediaPlayerEntity
+):
     """Representation of an Android Media Player."""
 
+    _attr_device_class = "speaker"
+
     @property
-    def state(self) -> MediaPlayerState:
+    def state(self) -> MediaPlayerState | None:
         """Return the state of the player."""
-        return self._state
+        data = self.coordinator.data or {}
+        return STATE_MAP.get(data.get("state", "idle"))
+
+# Use DataUpdateCoordinator for state management
+class AndroidMediaPlayerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Coordinator for managing connection to Android Media Player."""
+
+    def __init__(self, hass: HomeAssistant, host: str, port: int, name: str):
+        super().__init__(hass, _LOGGER, name=f"Android Media Player {name}")
+        # No update_interval - we use push updates via WebSocket
 ```
 
 ### Commit Messages
@@ -305,12 +328,19 @@ pytest tests/components/android_media_player/
 
 **Manual testing checklist:**
 - [ ] Integration adds via config flow
-- [ ] Entity appears in HA
+- [ ] Entity appears in HA with device_class "speaker"
 - [ ] Play/pause/stop work
 - [ ] Volume control works
-- [ ] State updates in real-time
+- [ ] State updates in real-time via WebSocket
 - [ ] Media browser works
 - [ ] Reconnection works after HA restart
+- [ ] Next/previous track work with queued media
+
+**Music Assistant testing:**
+- [ ] Player appears in MA's "Home Assistant MediaPlayers" provider
+- [ ] State changes in HA propagate to MA UI
+- [ ] Play/pause toggle works from MA interface
+- [ ] Queue operations work (add, next, replace)
 
 ### Update Server Testing
 
