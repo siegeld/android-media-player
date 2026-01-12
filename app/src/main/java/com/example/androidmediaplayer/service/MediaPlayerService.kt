@@ -3,12 +3,16 @@ package com.example.androidmediaplayer.service
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.IBinder
+import android.os.PowerManager
 import android.support.v4.media.session.MediaSessionCompat
 import androidx.core.app.NotificationCompat
 import com.example.androidmediaplayer.util.AppLog
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Metadata
@@ -43,6 +47,8 @@ class MediaPlayerService : Service() {
     private var mediaSession: MediaSessionCompat? = null
     private var httpServer: MediaHttpServer? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     private val _playerState = MutableStateFlow(PlayerState())
     val playerState: StateFlow<PlayerState> = _playerState.asStateFlow()
@@ -95,13 +101,69 @@ class MediaPlayerService : Service() {
 
     private fun startForegroundService(port: Int) {
         AppLog.d(TAG, "Starting foreground with notification")
-        startForeground(NOTIFICATION_ID, createNotification())
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                createNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
+        acquireWakeLocks()
         startHttpServer(port)
+    }
+
+    private fun acquireWakeLocks() {
+        if (wakeLock == null) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "AndroidMediaPlayer::ServiceWakeLock"
+            ).apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            AppLog.i(TAG, "Partial wake lock acquired")
+        }
+
+        if (wifiLock == null) {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            @Suppress("DEPRECATION")
+            wifiLock = wifiManager.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "AndroidMediaPlayer::WifiLock"
+            ).apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            AppLog.i(TAG, "WiFi lock acquired")
+        }
+    }
+
+    private fun releaseWakeLocks() {
+        wakeLock?.let {
+            if (it.isHeld) {
+                it.release()
+                AppLog.i(TAG, "Partial wake lock released")
+            }
+        }
+        wakeLock = null
+
+        wifiLock?.let {
+            if (it.isHeld) {
+                it.release()
+                AppLog.i(TAG, "WiFi lock released")
+            }
+        }
+        wifiLock = null
     }
 
     private fun initializePlayer() {
         AppLog.d(TAG, "Initializing ExoPlayer")
         player = ExoPlayer.Builder(this).build().apply {
+            // Keep CPU and WiFi awake during playback for streaming
+            setWakeMode(C.WAKE_MODE_NETWORK)
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     val stateStr = when (playbackState) {
@@ -444,6 +506,7 @@ class MediaPlayerService : Service() {
         AppLog.i(TAG, "Service destroying")
         serviceScope.cancel()
         httpServer?.stop()
+        releaseWakeLocks()
         player?.release()
         mediaSession?.release()
         AppLog.i(TAG, "Service destroyed")

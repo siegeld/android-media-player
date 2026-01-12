@@ -78,6 +78,10 @@ echo "Installing APK..."
 echo "Granting permissions..."
 "${ADB}" shell pm grant "${PACKAGE}" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 
+# Add to battery optimization whitelist to prevent freezing
+echo "Adding to battery optimization whitelist..."
+"${ADB}" shell dumpsys deviceidle whitelist "+${PACKAGE}" 2>/dev/null || true
+
 # Write config to shared preferences via adb
 echo "Configuring device..."
 "${ADB}" shell "run-as ${PACKAGE} sh -c 'mkdir -p shared_prefs'"

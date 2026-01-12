@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.9.3] - 2026-01-11
+
+### Fixed
+- **Background Playback - Android 14 App Freezing**
+  - Added explicit `FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK` to `startForeground()` call
+  - Deploy script now adds app to battery optimization whitelist via `dumpsys deviceidle whitelist`
+  - Deploy script now grants POST_NOTIFICATIONS permission automatically
+  - Web dashboard "Push Update" now also grants permissions and adds to whitelist
+- **Notification Permission UX**
+  - Added permission rationale dialog explaining why notification is needed
+  - Service now starts even if permission denied (with warning toast)
+  - Status bar shows warning when running without notification permission
+
+---
+
 ## [1.7] - 2026-01-11
 
 ### Added

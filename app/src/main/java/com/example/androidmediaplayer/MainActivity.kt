@@ -114,7 +114,9 @@ class MainActivity : AppCompatActivity() {
         if (isGranted) {
             startMediaService()
         } else {
-            AppLog.w(TAG, "Notification permission denied, service may not work properly")
+            AppLog.w(TAG, "Notification permission denied, background playback will not work")
+            android.widget.Toast.makeText(this, "Warning: Background playback will not work without notification permission", android.widget.Toast.LENGTH_LONG).show()
+            startMediaService()
         }
     }
 
@@ -144,6 +146,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var watchdogJob: kotlinx.coroutines.Job? = null
+    private var playerStateJob: kotlinx.coroutines.Job? = null
 
     private fun startServiceWatchdog() {
         watchdogJob?.cancel()
@@ -438,6 +441,10 @@ class MainActivity : AppCompatActivity() {
                     AppLog.d(TAG, "Notification permission already granted")
                     startMediaService()
                 }
+                shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) -> {
+                    AppLog.d(TAG, "Showing notification permission rationale")
+                    showNotificationPermissionRationale()
+                }
                 else -> {
                     AppLog.d(TAG, "Requesting notification permission")
                     notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -447,6 +454,20 @@ class MainActivity : AppCompatActivity() {
             AppLog.d(TAG, "Android < 13, no notification permission needed")
             startMediaService()
         }
+    }
+
+    private fun showNotificationPermissionRationale() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Notification Permission Required")
+            .setMessage("This app needs notification permission to keep playing audio in the background. Without it, playback will stop after about 1 minute when you switch apps.")
+            .setPositiveButton("Grant Permission") { _, _ ->
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            .setNegativeButton("Cancel") { _, _ ->
+                android.widget.Toast.makeText(this, "Warning: Background playback will not work", android.widget.Toast.LENGTH_LONG).show()
+                startMediaService()
+            }
+            .show()
     }
 
     private fun startMediaService() {
@@ -496,7 +517,13 @@ class MainActivity : AppCompatActivity() {
     private fun updateServiceButton() {
         if (serviceRunning) {
             binding.toggleServiceButton.text = getString(R.string.stop_service)
-            binding.statusText.text = getString(R.string.service_running)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                binding.statusText.text = "Running - WARNING: No notification permission"
+            } else {
+                binding.statusText.text = getString(R.string.service_running)
+            }
             binding.deviceNameInput.isEnabled = false
             binding.portInput.isEnabled = false
         } else {
@@ -558,7 +585,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun observePlayerState() {
         AppLog.d(TAG, "Starting to observe player state")
-        lifecycleScope.launch {
+        // Cancel any existing observer to prevent multiple collectors
+        playerStateJob?.cancel()
+        playerStateJob = lifecycleScope.launch {
             mediaService?.playerState?.collectLatest { state ->
                 AppLog.v(TAG, "Player state update: state=${state.state}, title=${state.mediaTitle}")
                 updatePlayerStateUI(state)
@@ -602,10 +631,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        AppLog.d(TAG, "onStart, serviceRunning=$serviceRunning")
-        if (serviceRunning) {
-            // Must call startForegroundService before bindService to ensure
-            // onStartCommand is called (which starts the HTTP server)
+        AppLog.d(TAG, "onStart, serviceRunning=$serviceRunning, serviceBound=$serviceBound")
+        if (serviceRunning && !serviceBound) {
+            // Must call startForegroundService to trigger onStartCommand (which starts HTTP server)
+            // The service handles repeated calls gracefully (HTTP server checks if already running)
             val deviceName = binding.deviceNameInput.text.toString().ifBlank { "Android Media Player" }
             val port = binding.portInput.text.toString().toIntOrNull() ?: 8765
             val intent = Intent(this, MediaPlayerService::class.java).apply {
@@ -626,6 +655,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         AppLog.d(TAG, "onDestroy, serviceBound=$serviceBound")
+        playerStateJob?.cancel()
         watchdogJob?.cancel()
         if (serviceBound) {
             unbindService(serviceConnection)

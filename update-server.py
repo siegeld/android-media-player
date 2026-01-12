@@ -187,6 +187,10 @@ def adb_push_update(device):
     # Install the APK
     result = run_adb("-s", device, "install", "-r", str(apk_path), timeout=120)
     if result["success"]:
+        # Grant notification permission (Android 13+, fails silently on older)
+        run_adb("-s", device, "shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS")
+        # Add to battery optimization whitelist to prevent freezing
+        run_adb("-s", device, "shell", "dumpsys", "deviceidle", "whitelist", f"+{PACKAGE}")
         # Start the app
         run_adb("-s", device, "shell", "am", "start", "-n", f"{PACKAGE}/.MainActivity")
         return {"success": True, "message": "Update installed successfully"}
@@ -966,6 +970,9 @@ WEB_UI_HTML = """
 
         function renderLogs(logs) {
             const container = document.getElementById('logs');
+            // Check if user is at bottom (within 50px threshold)
+            const wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+            const oldScrollTop = container.scrollTop;
             container.innerHTML = logs.map(log => `
                 <div class="log-entry log-${log.level}">
                     <span class="log-time">${log.timestamp || ''}</span>
@@ -974,7 +981,13 @@ WEB_UI_HTML = """
                     ${log.message || ''}
                 </div>
             `).join('');
-            container.scrollTop = container.scrollHeight;
+            if (wasAtBottom) {
+                // Auto-scroll to bottom
+                container.scrollTop = container.scrollHeight;
+            } else {
+                // Preserve scroll position
+                container.scrollTop = oldScrollTop;
+            }
         }
 
         function refreshAll() {

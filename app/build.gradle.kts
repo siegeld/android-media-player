@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.androidmediaplayer"
         minSdk = 29
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 13
+        versionName = "1.9.3"
     }
 
     buildTypes {
