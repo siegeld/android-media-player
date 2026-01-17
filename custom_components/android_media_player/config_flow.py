@@ -28,7 +28,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
-        vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
     }
 )
 
@@ -48,7 +47,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                     raise CannotConnect
 
                 device_info = await response.json()
-                device_name = device_info.get("name", data.get(CONF_NAME, DEFAULT_NAME))
+                device_name = device_info.get("name", DEFAULT_NAME)
 
                 return {
                     "title": device_name,
@@ -88,12 +87,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
-                # Use device name from Android if not overridden
-                if user_input.get(CONF_NAME) == DEFAULT_NAME:
-                    user_input[CONF_NAME] = info["title"]
+                # Use device name from Android
+                user_input[CONF_NAME] = info["title"]
 
                 return self.async_create_entry(
-                    title=user_input[CONF_NAME],
+                    title=info["title"],
                     data=user_input,
                 )
 

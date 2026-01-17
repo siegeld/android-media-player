@@ -3,11 +3,10 @@
     "step": {
       "user": {
         "title": "Add Android Media Player",
-        "description": "Enter the IP address and port of your Android device running the Media Player app.",
+        "description": "Enter the IP address and port of your Android device running the Media Player app. The device name will be automatically retrieved from the tablet.",
         "data": {
           "host": "IP Address",
-          "port": "Port",
-          "name": "Device Name"
+          "port": "Port"
         }
       }
     },
@@ -17,16 +16,6 @@
     },
     "abort": {
       "already_configured": "This device is already configured."
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Configure Android Media Player",
-        "data": {
-          "name": "Device Name"
-        }
-      }
     }
   }
 }
