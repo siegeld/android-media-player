@@ -412,7 +412,7 @@ WEB_UI_HTML = """
         h1 { color: #00d4ff; margin-bottom: 20px; }
         h2 { color: #00d4ff; margin: 20px 0 10px; font-size: 1.2em; }
         .container { max-width: 1400px; margin: 0 auto; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .grid { display: grid; grid-template-columns: 2fr 3fr; gap: 20px; }
         @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
         .card {
             background: #16213e; border-radius: 12px; padding: 20px;
