@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.2] - 2026-01-17
+
+### Fixed
+- **Choppy Sendspin audio** - Increased AudioTrack buffer from 4x to 6x minimum size
+- **Aggressive chunk skipping** - Relaxed late chunk threshold from 500ms to 1s
+
+---
+
 ## [2.0.1] - 2026-01-17
 
 ### Fixed

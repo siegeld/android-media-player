@@ -19,7 +19,7 @@ class SendspinAudioPlayer(
 ) {
     companion object {
         private const val TAG = "SendspinAudioPlayer"
-        private const val BUFFER_SIZE_FACTOR = 4 // Multiple of minimum buffer size
+        private const val BUFFER_SIZE_FACTOR = 6 // Multiple of minimum buffer size
         private const val SYNC_THRESHOLD_MICROS = 50_000L // 50ms sync threshold
     }
 
@@ -154,7 +154,7 @@ class SendspinAudioPlayer(
                     if (delayMs > 10) {
                         delay(delayMs - 10) // Leave 10ms margin
                     }
-                } else if (delayMicros < -500_000) { // More than 500ms behind
+                } else if (delayMicros < -1_000_000) { // More than 1s behind
                     // Chunk is way too old, skip it
                     if (chunkCount % 50 == 0) {
                         AppLog.w(TAG, "Skipping late chunk: ${-delayMicros/1000}ms behind")
