@@ -11,6 +11,8 @@ services:
       - ./android-sdk/build-tools:/app/android-sdk/build-tools:ro
       # Mount the ADB platform-tools for device management
       - ./android-sdk/platform-tools:/app/android-sdk/platform-tools:ro
+      # Mount ADB keys from project directory for portability
+      - ./android-sdk/keys:/root/.android:rw
       # Persist logs and state data
       - server-data:/app/data
     environment:
