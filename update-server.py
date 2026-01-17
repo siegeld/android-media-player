@@ -213,34 +213,43 @@ def adb_push_update(device):
             prefs_dir = f"/data/data/{PACKAGE}/shared_prefs"
             prefs_file = f"{prefs_dir}/media_player_prefs.xml"
 
-            # Check if update_server_host is already configured
+            # Always update the server URL to this server's IP
+            # This ensures devices point to the correct server after migration
             check_result = run_adb("-s", device, "shell", "run-as", PACKAGE,
                                    "cat", prefs_file)
             prefs_content = check_result.get("stdout", "")
-            has_server = "update_server_host" in prefs_content
 
-            if not has_server:
-                # Create prefs dir if needed
-                run_adb("-s", device, "shell", f'run-as {PACKAGE} mkdir -p {prefs_dir}')
+            # Create prefs dir if needed
+            run_adb("-s", device, "shell", f'run-as {PACKAGE} mkdir -p {prefs_dir}')
 
-                if "</map>" in prefs_content:
-                    # Insert the server host before </map> by modifying content
+            if "</map>" in prefs_content:
+                # Update or insert the server host
+                import re
+                if "update_server_host" in prefs_content:
+                    # Replace existing server host
+                    new_prefs = re.sub(
+                        r'<string name="update_server_host">[^<]*</string>',
+                        f'<string name="update_server_host">{server_ip}</string>',
+                        prefs_content
+                    )
+                else:
+                    # Insert the server host before </map>
                     new_prefs = prefs_content.replace(
                         "</map>",
                         f'    <string name="update_server_host">{server_ip}</string>\n</map>'
                     )
-                else:
-                    # No existing prefs, create new file
-                    new_prefs = f'''<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+            else:
+                # No existing prefs, create new file
+                new_prefs = f'''<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
     <string name="update_server_host">{server_ip}</string>
     <boolean name="service_running" value="true" />
 </map>'''
 
-                # Base64 encode to avoid shell escaping issues, write within run-as context
-                encoded = base64.b64encode(new_prefs.encode()).decode()
-                shell_cmd = f'echo {encoded} | base64 -d > {prefs_file}'
-                run_adb("-s", device, "shell", f'run-as {PACKAGE} sh -c "{shell_cmd}"')
+            # Base64 encode to avoid shell escaping issues, write within run-as context
+            encoded = base64.b64encode(new_prefs.encode()).decode()
+            shell_cmd = f'echo {encoded} | base64 -d > {prefs_file}'
+            run_adb("-s", device, "shell", f'run-as {PACKAGE} sh -c "{shell_cmd}"')
 
         # Start the app
         run_adb("-s", device, "shell", "am", "start", "-n", f"{PACKAGE}/.MainActivity")
