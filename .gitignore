@@ -1,7 +1,10 @@
 # Build outputs
-app/build/
 build/
-*.apk
+# Keep app/build/ but allow APKs
+app/build/*
+!app/build/outputs/
+app/build/outputs/*
+!app/build/outputs/apk/
 
 # Local SDK and JDK (downloaded by build.sh)
 android-sdk/
