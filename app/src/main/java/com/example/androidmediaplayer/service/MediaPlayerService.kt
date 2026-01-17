@@ -335,6 +335,13 @@ class MediaPlayerService : Service() {
                         // Start playback with format from config
                         audioPlayer.start(config.sampleRate, config.channels, config.bitDepth)
 
+                        // Apply current volume from Sendspin state
+                        val currentVolume = sendspinService?.state?.value?.volume ?: 100
+                        val muted = sendspinService?.state?.value?.muted ?: false
+                        val volumeToApply = if (muted) 0f else currentVolume / 100f
+                        audioPlayer.setVolume(volumeToApply)
+                        AppLog.d(TAG, "Applied initial volume to Sendspin player: $volumeToApply (volume=$currentVolume, muted=$muted)")
+
                         withContext(Dispatchers.Main) {
                             currentTitle = "Sendspin Stream"
                             currentArtist = sendspinService?.state?.value?.serverName

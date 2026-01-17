@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.1] - 2026-01-17
+
+### Fixed
+- **Volume reset when switching to Sendspin** - AudioTrack player now inherits current volume from Sendspin state instead of starting at 100%
+- **Slow Sendspin startup** - Reduced initial clock sync from 500ms to 150ms (5×100ms → 3×50ms)
+
+---
+
 ## [2.0.0] - 2026-01-17
 
 ### Added

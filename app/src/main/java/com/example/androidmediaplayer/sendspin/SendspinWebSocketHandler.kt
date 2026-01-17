@@ -37,7 +37,7 @@ class SendspinWebSocketHandler(
     companion object {
         private const val TAG = "SendspinWSHandler"
         private const val CLOCK_SYNC_INTERVAL_MS = 30_000L // Re-sync every 30 seconds
-        private const val INITIAL_SYNC_COUNT = 5 // Number of initial clock syncs
+        private const val INITIAL_SYNC_COUNT = 3 // Number of initial clock syncs (min required)
         private const val AUDIO_LOG_INTERVAL = 100 // Log every Nth audio chunk
     }
 
@@ -160,7 +160,7 @@ class SendspinWebSocketHandler(
             // Initial sync: send multiple time requests
             repeat(INITIAL_SYNC_COUNT) {
                 sendTimeRequest()
-                delay(100)
+                delay(50)
             }
 
             // Periodic sync
