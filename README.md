@@ -70,6 +70,14 @@ This project provides a complete solution for turning any Android device into a 
 - Play/pause toggle support
 - Queue and enqueue modes (add, next, replace)
 
+### Sendspin Multi-Room Audio
+- **Sendspin protocol support** for synchronized multi-room audio playback
+- Automatic discovery via mDNS (`_sendspin._tcp.local.`)
+- Clock synchronization with microsecond precision for tight sync
+- PCM audio streaming with AudioTrack-based playback
+- Volume and mute control from Sendspin servers
+- Works seamlessly with Music Assistant's multi-room groups
+
 ### Connectivity
 - Real-time state synchronization via WebSocket
 - REST API fallback for command delivery

@@ -9,7 +9,12 @@ data class PlayerState(
     val mediaDuration: Long? = null,
     val mediaPosition: Long? = null,
     val mediaUrl: String? = null,
-    val error: String? = null // Error message if playback failed
+    val error: String? = null, // Error message if playback failed
+    // Sendspin fields
+    val sendspinConnected: Boolean = false,
+    val sendspinServerName: String? = null,
+    val sendspinStreaming: Boolean = false,
+    val sendspinBufferHealth: Float? = null
 ) {
     companion object {
         const val STATE_IDLE = "idle"

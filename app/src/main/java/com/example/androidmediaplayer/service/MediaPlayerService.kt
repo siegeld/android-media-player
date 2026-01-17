@@ -24,7 +24,14 @@ import com.example.androidmediaplayer.MainActivity
 import com.example.androidmediaplayer.MediaPlayerApp
 import com.example.androidmediaplayer.R
 import com.example.androidmediaplayer.model.PlayerState
+import com.example.androidmediaplayer.sendspin.SendspinAudioPlayer
+import com.example.androidmediaplayer.sendspin.SendspinConnectionState
+import com.example.androidmediaplayer.sendspin.SendspinService
+import com.example.androidmediaplayer.sendspin.SendspinStreamConfig
 import com.example.androidmediaplayer.server.MediaHttpServer
+import androidx.media3.common.MimeTypes
+import androidx.media3.datasource.DataSpec
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,9 +53,12 @@ class MediaPlayerService : Service() {
     private var player: ExoPlayer? = null
     private var mediaSession: MediaSessionCompat? = null
     private var httpServer: MediaHttpServer? = null
+    private var sendspinService: SendspinService? = null
+    private var sendspinAudioPlayer: SendspinAudioPlayer? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var sendspinStreamActive = false
 
     private val _playerState = MutableStateFlow(PlayerState())
     val playerState: StateFlow<PlayerState> = _playerState.asStateFlow()
@@ -112,6 +122,7 @@ class MediaPlayerService : Service() {
         }
         acquireWakeLocks()
         startHttpServer(port)
+        startSendspinService()
     }
 
     private fun acquireWakeLocks() {
@@ -267,6 +278,147 @@ class MediaPlayerService : Service() {
                 AppLog.e(TAG, "Failed to start HTTP server: ${e.message}", e)
             }
         }
+    }
+
+    private fun startSendspinService() {
+        if (sendspinService != null) {
+            AppLog.d(TAG, "Sendspin service already running, skipping start")
+            return
+        }
+        AppLog.i(TAG, "Starting Sendspin service")
+        sendspinService = SendspinService(
+            context = this,
+            deviceName = deviceName,
+            onStreamStart = { config -> handleSendspinStreamStart(config) },
+            onStreamEnd = { handleSendspinStreamEnd() },
+            onVolumeChange = { volume -> handleSendspinVolumeChange(volume) },
+            onMuteChange = { muted -> handleSendspinMuteChange(muted) }
+        )
+        sendspinService?.start()
+
+        // Collect Sendspin state updates
+        serviceScope.launch {
+            sendspinService?.state?.collect { sendspinState ->
+                updatePlayerStateWithSendspin(sendspinState)
+            }
+        }
+    }
+
+    private fun handleSendspinStreamStart(config: SendspinStreamConfig) {
+        AppLog.i(TAG, "=== SENDSPIN STREAM START HANDLER ===")
+        AppLog.i(TAG, "Sendspin stream config: codec=${config.codec}, sampleRate=${config.sampleRate}Hz, channels=${config.channels}, bitDepth=${config.bitDepth}")
+        sendspinStreamActive = true
+
+        val service = sendspinService
+        if (service == null) {
+            AppLog.e(TAG, "SendspinService is null!")
+            return
+        }
+
+        when (config.codec) {
+            "pcm" -> {
+                // Use AudioTrack for raw PCM (ExoPlayer can't handle headerless PCM)
+                AppLog.i(TAG, "Using AudioTrack for PCM playback")
+                serviceScope.launch(Dispatchers.IO) {
+                    try {
+                        // Stop any current playback
+                        withContext(Dispatchers.Main) {
+                            player?.stop()
+                            player?.clearMediaItems()
+                        }
+
+                        // Create or reset audio player
+                        sendspinAudioPlayer?.stop()
+                        val audioPlayer = SendspinAudioPlayer(service.audioBuffer, service.getClockSync())
+                        sendspinAudioPlayer = audioPlayer
+
+                        // Start playback with format from config
+                        audioPlayer.start(config.sampleRate, config.channels, config.bitDepth)
+
+                        withContext(Dispatchers.Main) {
+                            currentTitle = "Sendspin Stream"
+                            currentArtist = sendspinService?.state?.value?.serverName
+                            currentUrl = "sendspin://stream"
+                            updatePlayerState()
+                            updateNotification()
+                        }
+
+                        AppLog.i(TAG, "Sendspin AudioTrack playback started successfully")
+                    } catch (e: Exception) {
+                        AppLog.e(TAG, "Failed to start Sendspin playback: ${e.message}", e)
+                    }
+                }
+            }
+            else -> {
+                // For other codecs (opus, flac), we'd need container wrapping
+                // For now, log that they're unsupported
+                AppLog.e(TAG, "Unsupported codec for direct playback: ${config.codec}")
+                AppLog.e(TAG, "Only PCM is currently supported")
+            }
+        }
+    }
+
+    private fun handleSendspinStreamEnd() {
+        AppLog.i(TAG, "Sendspin stream ended")
+        sendspinStreamActive = false
+
+        // Stop AudioTrack-based player
+        sendspinAudioPlayer?.stop()
+        sendspinAudioPlayer = null
+
+        serviceScope.launch(Dispatchers.Main) {
+            player?.stop()
+            player?.clearMediaItems()
+            currentTitle = null
+            currentArtist = null
+            currentUrl = null
+            updatePlayerState()
+            updateNotification()
+        }
+    }
+
+    private fun handleSendspinVolumeChange(volume: Int) {
+        AppLog.d(TAG, "Sendspin volume change: $volume")
+        // Convert 0-100 to 0.0-1.0
+        val floatVolume = volume / 100f
+        sendspinAudioPlayer?.setVolume(floatVolume)
+        serviceScope.launch(Dispatchers.Main) {
+            player?.volume = floatVolume
+            updatePlayerState()
+        }
+    }
+
+    private fun handleSendspinMuteChange(muted: Boolean) {
+        AppLog.d(TAG, "Sendspin mute change: $muted")
+        if (muted) {
+            sendspinAudioPlayer?.setVolume(0f)
+        } else {
+            val volume = sendspinService?.state?.value?.volume ?: 100
+            sendspinAudioPlayer?.setVolume(volume / 100f)
+        }
+        serviceScope.launch(Dispatchers.Main) {
+            if (muted) {
+                player?.volume = 0f
+            } else {
+                // Restore volume from Sendspin state
+                val volume = sendspinService?.state?.value?.volume ?: 100
+                player?.volume = volume / 100f
+            }
+            updatePlayerState()
+        }
+    }
+
+    private fun updatePlayerStateWithSendspin(sendspinState: com.example.androidmediaplayer.sendspin.SendspinPlayerState) {
+        val connected = sendspinState.connectionState == SendspinConnectionState.CONNECTED ||
+                sendspinState.connectionState == SendspinConnectionState.STREAMING
+
+        _playerState.value = _playerState.value.copy(
+            sendspinConnected = connected,
+            sendspinServerName = sendspinState.serverName,
+            sendspinStreaming = sendspinState.streamActive,
+            sendspinBufferHealth = sendspinState.bufferHealthPercent
+        )
+        httpServer?.broadcastState(_playerState.value)
     }
 
     fun playMedia(url: String, title: String? = null, artist: String? = null) {
@@ -516,6 +668,9 @@ class MediaPlayerService : Service() {
     override fun onDestroy() {
         AppLog.i(TAG, "Service destroying")
         serviceScope.cancel()
+        sendspinAudioPlayer?.release()
+        sendspinAudioPlayer = null
+        sendspinService?.stop()
         httpServer?.stop()
         releaseWakeLocks()
         player?.release()

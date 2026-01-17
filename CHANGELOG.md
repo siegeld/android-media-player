@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.0] - 2026-01-17
+
+### Added
+- **Sendspin Multi-Room Audio Protocol Support**
+  - Full implementation of the Sendspin protocol for synchronized multi-room audio
+  - mDNS service advertisement (`_sendspin._tcp.local.`) on port 8927
+  - WebSocket server for Sendspin protocol communication
+  - Clock synchronization with microsecond precision using NTP-like algorithm
+  - AudioTrack-based PCM playback for low-latency streaming
+  - Persistent client ID for stable device identification
+  - Volume and mute control from Sendspin servers (Music Assistant)
+
+### New Files
+- `SendspinService.kt` - mDNS registration and WebSocket server lifecycle
+- `SendspinProtocol.kt` - Message types and JSON serialization
+- `SendspinWebSocketHandler.kt` - Protocol state machine and message handling
+- `SendspinClockSync.kt` - Microsecond-precision clock synchronization
+- `SendspinAudioBuffer.kt` - Thread-safe ring buffer for audio chunks
+- `SendspinAudioPlayer.kt` - AudioTrack-based playback with sync support
+- `SendspinDataSource.kt` - ExoPlayer DataSource implementation (for future codec support)
+- `SendspinState.kt` - Connection state data classes
+
+### Changed
+- MediaPlayerService now initializes Sendspin service alongside HTTP server
+- Both control APIs (HTTP on 8765, Sendspin on 8927) share the same ExoPlayer instance
+
+### Technical Details
+- Sendspin streams take priority when active
+- Currently supports PCM codec (Opus/FLAC require container wrapping)
+- Clock sync uses median of last 10 samples for stability
+- AudioTrack buffer latency is compensated in sync calculations
+
+---
+
 ## [1.9.3] - 2026-01-11
 
 ### Fixed
@@ -155,7 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Version | Date | Highlights |
 |---------|------|------------|
 | 1.0.0 | 2026-01-01 | Initial release with core functionality |
-| 1.1.0 | TBD | Music Assistant support, OTA updates, queue management |
+| 1.9.3 | 2026-01-11 | Android 14 background playback fixes |
+| 2.0.0 | 2026-01-17 | Sendspin multi-room audio protocol support |
 
 ---
 

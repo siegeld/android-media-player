@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.androidmediaplayer"
         minSdk = 29
         targetSdk = 34
-        versionCode = 16
-        versionName = "1.10.2"
+        versionCode = 30
+        versionName = "2.0.0"
     }
 
     buildTypes {
@@ -62,6 +62,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.2.0")
     implementation("androidx.media3:media3-session:1.2.0")
     implementation("androidx.media3:media3-ui:1.2.0")
+    // Note: Opus decoding is built into ExoPlayer core via software decoder
 
     // Legacy media support for MediaSessionCompat
     implementation("androidx.media:media:1.7.0")
