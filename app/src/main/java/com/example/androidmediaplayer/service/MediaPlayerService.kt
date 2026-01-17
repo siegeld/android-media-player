@@ -250,6 +250,17 @@ class MediaPlayerService : Service() {
         serviceScope.launch(Dispatchers.IO) {
             try {
                 httpServer = MediaHttpServer(this@MediaPlayerService, port, deviceName)
+                httpServer?.nameChangeHandler = object : MediaHttpServer.NameChangeHandler {
+                    override fun onNameChanged(newName: String) {
+                        deviceName = newName
+                        // Save to SharedPreferences
+                        val prefs = getSharedPreferences("media_player_prefs", Context.MODE_PRIVATE)
+                        prefs.edit().putString("device_name", newName).apply()
+                        // Update RemoteLogger so logs use the new name
+                        MediaPlayerApp.remoteLogger?.updateDeviceName(newName)
+                        AppLog.i(TAG, "Device name changed and saved: $newName")
+                    }
+                }
                 httpServer?.start()
                 AppLog.i(TAG, "HTTP server started successfully on port $port")
             } catch (e: Exception) {

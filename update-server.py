@@ -178,6 +178,20 @@ def adb_connect(ip, port):
     return {"success": False, "message": output}
 
 
+def get_server_ip():
+    """Get this server's IP address for configuring devices."""
+    import socket
+    try:
+        # Connect to a remote address to determine our local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
+
+
 def adb_push_update(device):
     """Push APK update to device via ADB."""
     apk_path, version_code, version_name = get_best_apk()
@@ -191,9 +205,46 @@ def adb_push_update(device):
         run_adb("-s", device, "shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS")
         # Add to battery optimization whitelist to prevent freezing
         run_adb("-s", device, "shell", "dumpsys", "deviceidle", "whitelist", f"+{PACKAGE}")
+
+        # Configure update server host in SharedPreferences (only if not already set)
+        server_ip = get_server_ip()
+        if server_ip:
+            import base64
+            prefs_dir = f"/data/data/{PACKAGE}/shared_prefs"
+            prefs_file = f"{prefs_dir}/media_player_prefs.xml"
+
+            # Check if update_server_host is already configured
+            check_result = run_adb("-s", device, "shell", "run-as", PACKAGE,
+                                   "cat", prefs_file)
+            prefs_content = check_result.get("stdout", "")
+            has_server = "update_server_host" in prefs_content
+
+            if not has_server:
+                # Create prefs dir if needed
+                run_adb("-s", device, "shell", f'run-as {PACKAGE} mkdir -p {prefs_dir}')
+
+                if "</map>" in prefs_content:
+                    # Insert the server host before </map> by modifying content
+                    new_prefs = prefs_content.replace(
+                        "</map>",
+                        f'    <string name="update_server_host">{server_ip}</string>\n</map>'
+                    )
+                else:
+                    # No existing prefs, create new file
+                    new_prefs = f'''<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="update_server_host">{server_ip}</string>
+    <boolean name="service_running" value="true" />
+</map>'''
+
+                # Base64 encode to avoid shell escaping issues, write within run-as context
+                encoded = base64.b64encode(new_prefs.encode()).decode()
+                shell_cmd = f'echo {encoded} | base64 -d > {prefs_file}'
+                run_adb("-s", device, "shell", f'run-as {PACKAGE} sh -c "{shell_cmd}"')
+
         # Start the app
         run_adb("-s", device, "shell", "am", "start", "-n", f"{PACKAGE}/.MainActivity")
-        return {"success": True, "message": "Update installed successfully"}
+        return {"success": True, "message": f"Update installed successfully (server: {server_ip})"}
     return {"success": False, "message": result.get("stderr", result.get("error", "Install failed"))}
 
 
@@ -250,8 +301,8 @@ def adb_disable_play_protect(device):
     return {"success": True, "message": "Play Protect disabled"}
 
 
-def get_device_app_name(device):
-    """Get the device name from the app's API."""
+def get_device_app_info(device):
+    """Get the device name and version from the app's API."""
     import urllib.request
     try:
         # Get IP from device address
@@ -264,15 +315,15 @@ def get_device_app_name(device):
             if match:
                 ip = match.group(1)
             else:
-                return None
+                return None, None
 
         url = f"http://{ip}:8765/"
         req = urllib.request.Request(url, headers={'User-Agent': 'UpdateServer'})
         with urllib.request.urlopen(req, timeout=2) as resp:
             data = json.loads(resp.read().decode())
-            return data.get("name")
+            return data.get("name"), data.get("version")
     except Exception:
-        return None
+        return None, None
 
 
 def get_device_player_state(ip):
@@ -285,6 +336,48 @@ def get_device_player_state(ip):
             return json.loads(resp.read().decode())
     except Exception:
         return None
+
+
+def set_device_player_name(ip, name):
+    """Set the media player name via the app's API."""
+    import urllib.request
+    try:
+        url = f"http://{ip}:8765/name"
+        data = json.dumps({"name": name}).encode()
+        req = urllib.request.Request(url, data=data, headers={
+            'User-Agent': 'UpdateServer',
+            'Content-Type': 'application/json'
+        }, method='POST')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+def adb_set_tablet_name(device, name):
+    """Set the tablet device name via ADB (requires device owner or root)."""
+    # Try multiple methods to set device name
+    results = []
+
+    # Method 1: Set global device_name setting (Android 7+)
+    result = run_adb("-s", device, "shell", "settings", "put", "global", "device_name", name)
+    results.append(("global device_name", result))
+
+    # Method 2: Set secure bluetooth_name (affects Bluetooth name)
+    result = run_adb("-s", device, "shell", "settings", "put", "secure", "bluetooth_name", name)
+    results.append(("bluetooth_name", result))
+
+    # Method 3: Set system device_name (older Android versions)
+    result = run_adb("-s", device, "shell", "settings", "put", "system", "device_name", name)
+    results.append(("system device_name", result))
+
+    # Check if any succeeded
+    success = any(r[1].get("success", False) for r in results)
+
+    if success:
+        return {"success": True, "message": f"Tablet name set to '{name}'"}
+    else:
+        return {"success": False, "message": "Failed to set tablet name (may require device owner)"}
 
 
 def get_device_serial(device):
@@ -447,27 +540,66 @@ WEB_UI_HTML = """
     <!-- Add Device Modal -->
     <div id="addDeviceModal" class="modal">
         <div class="modal-content">
-            <h3 class="modal-title">Add Device via ADB</h3>
-            <p style="color:#aaa;margin-bottom:20px;">Enable Wireless Debugging on the tablet, then enter the pairing info.</p>
+            <!-- Step 1: Pairing -->
+            <div id="pairStep">
+                <h3 class="modal-title">Step 1: Pair Device</h3>
+                <p style="color:#aaa;margin-bottom:20px;">Enable Wireless Debugging on the tablet, tap "Pair device with pairing code", then enter the info shown.</p>
+                <div class="form-group">
+                    <label>Device IP Address</label>
+                    <input type="text" id="device-ip" placeholder="192.168.1.100">
+                </div>
+                <div class="form-group">
+                    <label>Pairing Port (shown on device)</label>
+                    <input type="text" id="pair-port" placeholder="37123">
+                </div>
+                <div class="form-group">
+                    <label>Pairing Code (shown on device)</label>
+                    <input type="text" id="pair-code" placeholder="123456">
+                </div>
+                <div style="margin-top:20px;">
+                    <button class="btn btn-success" onclick="pairDevice()">Pair</button>
+                    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                </div>
+            </div>
+            <!-- Step 2: Connect -->
+            <div id="connectStep" style="display:none;">
+                <h3 class="modal-title">Step 2: Connect</h3>
+                <p style="color:#aaa;margin-bottom:20px;">Pairing successful! Now enter the connection port shown on the device under "Wireless debugging".</p>
+                <div class="form-group">
+                    <label>Device IP Address</label>
+                    <input type="text" id="connect-ip" disabled>
+                </div>
+                <div class="form-group">
+                    <label>Connection Port (shown on device)</label>
+                    <input type="text" id="connect-port" placeholder="41297">
+                </div>
+                <div style="margin-top:20px;">
+                    <button class="btn btn-success" onclick="connectDevice()">Connect</button>
+                    <button class="btn btn-secondary" onclick="goBackToPairStep()">Back</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Device Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Device Settings</h3>
+            <input type="hidden" id="settings-ip">
+            <input type="hidden" id="settings-adb-address">
             <div class="form-group">
-                <label>Device IP Address</label>
-                <input type="text" id="device-ip" placeholder="192.168.1.100">
+                <label>Media Player Name</label>
+                <input type="text" id="settings-player-name" placeholder="Living Room Speaker">
+                <p style="font-size:0.8em;color:#888;margin-top:5px;">Name shown in Home Assistant and the web UI</p>
             </div>
             <div class="form-group">
-                <label>Pairing Port (from device)</label>
-                <input type="text" id="pair-port" placeholder="37123">
-            </div>
-            <div class="form-group">
-                <label>Pairing Code (from device)</label>
-                <input type="text" id="pair-code" placeholder="123456">
-            </div>
-            <div class="form-group">
-                <label>Connection Port (usually 5555 or shown on device)</label>
-                <input type="text" id="connect-port" placeholder="41297">
+                <label>Tablet Device Name (via ADB)</label>
+                <input type="text" id="settings-tablet-name" placeholder="Kitchen Tablet">
+                <p style="font-size:0.8em;color:#888;margin-top:5px;">Android device name (requires ADB connection)</p>
             </div>
             <div style="margin-top:20px;">
-                <button class="btn btn-success" onclick="pairAndConnectDevice()">Pair & Connect</button>
-                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-success" onclick="saveDeviceSettings()">Save</button>
+                <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
             </div>
         </div>
     </div>
@@ -487,6 +619,13 @@ WEB_UI_HTML = """
         }
 
         function showAddDeviceModal() {
+            // Reset to step 1
+            document.getElementById('pairStep').style.display = 'block';
+            document.getElementById('connectStep').style.display = 'none';
+            document.getElementById('device-ip').value = '';
+            document.getElementById('pair-port').value = '';
+            document.getElementById('pair-code').value = '';
+            document.getElementById('connect-port').value = '';
             document.getElementById('addDeviceModal').classList.add('active');
         }
 
@@ -494,31 +633,146 @@ WEB_UI_HTML = """
             document.getElementById('addDeviceModal').classList.remove('active');
         }
 
-        async function pairAndConnectDevice() {
+        function showSettingsModal(name, ip, adbAddress) {
+            // Extract IP from adbAddress if ip is not provided
+            let effectiveIp = ip;
+            if (!effectiveIp && adbAddress && adbAddress.includes(':') && !adbAddress.startsWith('adb-')) {
+                effectiveIp = adbAddress.split(':')[0];
+            }
+            console.log('showSettingsModal:', {name, ip, adbAddress, effectiveIp});
+            document.getElementById('settings-ip').value = effectiveIp || '';
+            document.getElementById('settings-adb-address').value = adbAddress || '';
+            document.getElementById('settings-player-name').value = name || '';
+            document.getElementById('settings-tablet-name').value = name || '';
+            document.getElementById('settingsModal').classList.add('active');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+
+        async function saveDeviceSettings() {
+            const ip = document.getElementById('settings-ip').value;
+            const adbAddress = document.getElementById('settings-adb-address').value;
+            const playerName = document.getElementById('settings-player-name').value.trim();
+            const tabletName = document.getElementById('settings-tablet-name').value.trim();
+
+            let playerSuccess = false;
+            let tabletSuccess = false;
+            let messages = [];
+
+            console.log('saveDeviceSettings:', {ip, adbAddress, playerName, tabletName});
+
+            // Set media player name (via HTTP to the app)
+            if (!ip) {
+                messages.push('No IP address available');
+            } else if (!playerName) {
+                messages.push('Player name is empty');
+            }
+
+            if (ip && playerName) {
+                showToast('Setting media player name...');
+                try {
+                    const resp = await fetch('/api/set-player-name', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ip, name: playerName})
+                    });
+                    const result = await resp.json();
+                    if (result.success) {
+                        playerSuccess = true;
+                        messages.push('Media player name updated');
+                    } else {
+                        messages.push('Media player: ' + (result.message || 'Failed'));
+                    }
+                } catch (e) {
+                    messages.push('Media player: ' + e.message);
+                }
+            }
+
+            // Set tablet device name (via ADB)
+            if (adbAddress && tabletName) {
+                showToast('Setting tablet name via ADB...');
+                try {
+                    const resp = await fetch('/api/set-tablet-name', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({device: adbAddress, name: tabletName})
+                    });
+                    const result = await resp.json();
+                    if (result.success) {
+                        tabletSuccess = true;
+                        messages.push('Tablet name updated');
+                    } else {
+                        messages.push('Tablet: ' + (result.message || 'Failed'));
+                    }
+                } catch (e) {
+                    messages.push('Tablet: ' + e.message);
+                }
+            }
+
+            const anySuccess = playerSuccess || tabletSuccess;
+            const allSuccess = (!ip || !playerName || playerSuccess) && (!adbAddress || !tabletName || tabletSuccess);
+
+            if (messages.length > 0) {
+                showToast(messages.join('; '), !allSuccess);
+            }
+
+            // Close modal if at least one operation succeeded
+            if (anySuccess) {
+                closeSettingsModal();
+                // Small delay to ensure device has updated, then refresh
+                setTimeout(() => fetchAllDevices(), 500);
+            }
+        }
+
+        function goBackToPairStep() {
+            document.getElementById('pairStep').style.display = 'block';
+            document.getElementById('connectStep').style.display = 'none';
+        }
+
+        async function pairDevice() {
             const ip = document.getElementById('device-ip').value.trim();
             const pairPort = document.getElementById('pair-port').value.trim();
             const pairCode = document.getElementById('pair-code').value.trim();
-            const connectPort = document.getElementById('connect-port').value.trim();
 
-            if (!ip || !connectPort) {
-                showToast('IP and connection port are required', true);
+            if (!ip || !pairPort || !pairCode) {
+                showToast('All fields are required', true);
                 return;
             }
 
             try {
-                if (pairPort && pairCode) {
-                    showToast('Pairing...');
-                    const pairResp = await fetch('/api/adb/pair', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ip, port: pairPort, code: pairCode})
-                    });
-                    const pairResult = await pairResp.json();
-                    if (!pairResult.success) {
-                        showToast('Pairing failed: ' + pairResult.message, true);
-                        return;
-                    }
+                showToast('Pairing...');
+                const pairResp = await fetch('/api/adb/pair', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ip, port: pairPort, code: pairCode})
+                });
+                const pairResult = await pairResp.json();
+                if (!pairResult.success) {
+                    showToast('Pairing failed: ' + pairResult.message, true);
+                    return;
                 }
+                showToast('Paired successfully!');
+                // Move to step 2
+                document.getElementById('connect-ip').value = ip;
+                document.getElementById('pairStep').style.display = 'none';
+                document.getElementById('connectStep').style.display = 'block';
+            } catch (e) {
+                showToast('Error: ' + e.message, true);
+            }
+        }
+
+        async function connectDevice() {
+            const ip = document.getElementById('connect-ip').value.trim();
+            const connectPort = document.getElementById('connect-port').value.trim();
+
+            if (!connectPort) {
+                showToast('Connection port is required', true);
+                return;
+            }
+
+            try {
                 showToast('Connecting...');
                 const connResp = await fetch('/api/adb/connect', {
                     method: 'POST',
@@ -688,7 +942,7 @@ WEB_UI_HTML = """
                         is_device_owner: d.is_device_owner,
                         adb_connected: true,
                         app_connected: false,
-                        version: null,
+                        version: d.version || null,
                         last_seen: null,
                         player_state: ip ? existingStates[ip] || null : null
                     };
@@ -696,7 +950,7 @@ WEB_UI_HTML = """
                 for (const [id, d] of Object.entries(appDevices)) {
                     const ip = d.ip_address;
                     if (ip && merged[ip]) {
-                        merged[ip].name = d.device_name || merged[ip].name;
+                        // Don't overwrite name from ADB (fresh from device) with cached name
                         merged[ip].version = d.app_version;
                         merged[ip].last_seen = d.last_seen;
                         merged[ip].app_connected = true;
@@ -858,7 +1112,9 @@ WEB_UI_HTML = """
                     (d.adb_address && d.adb_address !== d.ip + ':41297' ? ' | ADB: ' + d.adb_address : '');
                 const isPlaying = d.player_state && d.player_state.state === 'playing';
                 const isPaused = d.player_state && d.player_state.state === 'paused';
+                const settingsBtn = `<button class="btn btn-small btn-secondary" onclick="showSettingsModal('${(d.name || '').replace(/'/g, "\\'")}', '${d.ip || ''}', '${d.adb_address || ''}')" title="Edit device name">Edit Name</button>`;
                 const buttons =
+                    settingsBtn +
                     (d.ip ? `<button class="btn btn-small" onclick="playTestStream('${d.ip}')">Test Stream</button>` : '') +
                     (d.ip && isPlaying ? `<button class="btn btn-small btn-secondary" onclick="pausePlayback('${d.ip}')">Pause</button>` : '') +
                     (d.ip && isPaused ? `<button class="btn btn-small btn-success" onclick="resumePlayback('${d.ip}')">Play</button>` : '') +
@@ -871,6 +1127,8 @@ WEB_UI_HTML = """
                 // Static hash includes play state for button updates
                 const psData = getPlayerStateData(d.player_state);
                 const staticHash = d.name + badges + info + isPlaying + isPaused + psData.state + psData.title + psData.artist;
+
+                console.log('renderDevices:', {deviceId, name: d.name, oldHash: card?.dataset?.staticHash, newHash: staticHash, willUpdate: card ? card.dataset.staticHash !== staticHash : 'new'});
 
                 if (!card) {
                     // Create new card
@@ -1049,6 +1307,10 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
             self.handle_adb_device_owner()
         elif self.path == "/api/adb/disable-protect":
             self.handle_adb_disable_protect()
+        elif self.path == "/api/set-player-name":
+            self.handle_set_player_name()
+        elif self.path == "/api/set-tablet-name":
+            self.handle_set_tablet_name()
         else:
             self.send_error(404, "Not Found")
 
@@ -1306,12 +1568,14 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
             owner_info = adb_check_device_owner(addr)
             d['is_device_owner'] = owner_info.get('is_device_owner', False)
 
-            # Get app name
-            app_name = get_device_app_name(addr)
+            # Get app name and version
+            app_name, app_version = get_device_app_info(addr)
             if app_name:
                 d['name'] = app_name
             else:
                 d['name'] = d.get('model', addr)
+            if app_version:
+                d['version'] = app_version
 
             d['serial'] = serial
             if serial:
@@ -1401,6 +1665,48 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
             data = json.loads(body)
             device = data.get('device') or f"{data['ip']}:{data['port']}"
             result = adb_disable_play_protect(device)
+            body = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            self.send_error(400, str(e))
+
+    def handle_set_player_name(self):
+        """Set media player name via the app's HTTP API."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode()
+            data = json.loads(body)
+            ip = data.get('ip')
+            name = data.get('name')
+            if not ip or not name:
+                self.send_error(400, "Missing 'ip' or 'name' parameter")
+                return
+            result = set_device_player_name(ip, name)
+            body = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            self.send_error(400, str(e))
+
+    def handle_set_tablet_name(self):
+        """Set tablet device name via ADB."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode()
+            data = json.loads(body)
+            device = data.get('device')
+            name = data.get('name')
+            if not device or not name:
+                self.send_error(400, "Missing 'device' or 'name' parameter")
+                return
+            result = adb_set_tablet_name(device, name)
             body = json.dumps(result).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

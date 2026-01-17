@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class MediaHttpServer(
     private val service: MediaPlayerService,
     private val port: Int,
-    private val deviceName: String
+    private var deviceName: String
 ) {
     companion object {
         private const val TAG = "MediaHttpServer"
@@ -34,6 +34,10 @@ class MediaHttpServer(
         suspend fun checkForUpdate(): UpdateInfo?
         suspend fun downloadAndInstall(): Boolean
         fun getUpdateState(): String
+    }
+
+    interface NameChangeHandler {
+        fun onNameChanged(newName: String)
     }
 
     data class UpdateInfo(
@@ -51,6 +55,7 @@ class MediaHttpServer(
     private val connectionCounter = AtomicInteger(0)
 
     var updateHandler: UpdateHandler? = null
+    var nameChangeHandler: NameChangeHandler? = null
 
     fun start() {
         AppLog.i(TAG, "Starting HTTP/WebSocket server on port $port for device '$deviceName'")
@@ -316,6 +321,36 @@ class MediaHttpServer(
                 } catch (e: Exception) {
                     AppLog.e(TAG, "POST /update error: ${e.message}", e)
                     call.respond(mapOf("success" to false, "message" to e.message))
+                }
+            }
+
+            // Get current device name
+            get("/name") {
+                val clientIp = call.request.local.remoteHost
+                AppLog.d(TAG, "GET /name from $clientIp")
+                call.respond(mapOf("name" to deviceName))
+            }
+
+            // Change device name
+            post("/name") {
+                val clientIp = call.request.local.remoteHost
+                try {
+                    val request = call.receive<NameRequest>()
+                    AppLog.i(TAG, "POST /name from $clientIp - new name: ${request.name}")
+
+                    val newName = request.name.trim()
+                    if (newName.isEmpty()) {
+                        call.respond(HttpStatusCode.BadRequest, mapOf("success" to false, "message" to "Name cannot be empty"))
+                        return@post
+                    }
+
+                    deviceName = newName
+                    nameChangeHandler?.onNameChanged(newName)
+
+                    call.respond(mapOf("success" to true, "name" to deviceName, "message" to "Name changed successfully"))
+                } catch (e: Exception) {
+                    AppLog.e(TAG, "POST /name error from $clientIp: ${e.message}", e)
+                    call.respond(HttpStatusCode.BadRequest, mapOf("success" to false, "message" to e.message))
                 }
             }
 

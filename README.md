@@ -295,10 +295,22 @@ Access the monitoring dashboard at `http://<server-ip>:9742/`
 **Device Management Actions:**
 | Button | Description |
 |--------|-------------|
+| Edit Name | Change the media player name and/or tablet device name |
 | Push Update (ADB) | Install latest APK via ADB |
 | OTA Update | Trigger app to download and install update |
 | Enable Silent Updates | Set Device Owner mode (requires no Google accounts) |
 | Disable Protect | Disable Play Protect verification |
+
+**Renaming Devices:**
+
+Click "Edit Name" to open the settings modal with two options:
+
+| Field | What it changes |
+|-------|-----------------|
+| Media Player Name | App name shown in Home Assistant, web UI, and log messages |
+| Tablet Device Name | Android system name (Bluetooth, settings) - set via ADB |
+
+The Media Player Name change takes effect immediately. The Tablet Device Name change requires ADB connection and may not work on all devices without device owner permissions.
 
 **Adding New Devices:**
 1. Click "+ Add Device" button
@@ -397,6 +409,8 @@ The Android app exposes these REST endpoints:
 | `/mute` | POST | `{"muted": true/false}` | JSON | Set mute state |
 | `/seek` | POST | `{"position": <ms>}` | JSON | Seek to position in milliseconds |
 | `/browse` | GET | `?media_content_id=...` | JSON | Browse media library |
+| `/name` | GET | - | JSON | Get current device name |
+| `/name` | POST | `{"name": "..."}` | JSON | Set device name |
 
 **State Response Schema:**
 

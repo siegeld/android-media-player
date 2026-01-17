@@ -61,6 +61,11 @@ class RemoteLogger(private val context: Context) {
         startPeriodicTasks()
     }
 
+    fun updateDeviceName(newName: String) {
+        this.deviceName = newName
+        AppLog.d(TAG, "Remote logger device name updated to: $newName")
+    }
+
     private fun startPeriodicTasks() {
         // Start periodic log flush
         flushJob?.cancel()

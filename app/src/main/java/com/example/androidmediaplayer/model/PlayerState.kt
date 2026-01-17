@@ -37,6 +37,10 @@ data class SeekRequest(
     val position: Long
 )
 
+data class NameRequest(
+    val name: String
+)
+
 data class ApiResponse(
     val success: Boolean,
     val message: String? = null,
