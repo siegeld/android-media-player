@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 import threading
 
 PORT = 9742
-SERVER_VERSION = "3.0.2"  # Monitor/server version (separate from APK version)
+SERVER_VERSION = "3.0.4"  # Monitor/server version (separate from APK version)
 APK_DIR = Path(__file__).parent / "app/build/outputs/apk/debug"
 APK_PATH = APK_DIR / "app-debug.apk"  # Default path for backwards compatibility
 DATA_DIR = Path(__file__).parent / "data"
@@ -539,7 +539,6 @@ WEB_UI_HTML = """
         }
         .device-card { border-left: 4px solid #00d4ff; }
         .device-card.offline { border-left-color: #ff6b6b; opacity: 0.7; }
-        .device-card.outdated, .adb-device.outdated, .adb-device.expanded.outdated { background: #2d2416; border-left-color: #f6ad55; }
         .device-name { font-size: 1.3em; font-weight: bold; color: #00d4ff; }
         .device-info { margin-top: 10px; font-size: 0.9em; color: #aaa; }
         .device-info span { display: block; margin: 4px 0; }
@@ -609,6 +608,7 @@ WEB_UI_HTML = """
             display: flex; justify-content: space-between; align-items: center;
             border-left: 4px solid #333; transition: border-color 0.2s, background 0.2s; }
         .adb-device.expanded { border-left-color: #00d4ff; background: #0f3460; }
+        .adb-device.outdated, .adb-device.expanded.outdated { background: #2d2416 !important; border-left-color: #f6ad55 !important; }
         .device-header { display: flex; align-items: flex-start; cursor: pointer; }
         .device-header:hover { opacity: 0.85; }
         .expand-btn { background: #1a3a5c; border: none; color: #aaa; font-size: 1em; cursor: pointer;
@@ -1304,7 +1304,9 @@ WEB_UI_HTML = """
                 }
 
                 // Check if device is running an older version
-                const isOutdated = latestApkVersion && d.version && d.version !== latestApkVersion;
+                // d.version is like "2.0.3 (33)" - extract just the version number
+                const deviceVersion = d.version ? d.version.split(' ')[0] : null;
+                const isOutdated = latestApkVersion && deviceVersion && deviceVersion !== latestApkVersion;
 
                 // Static hash includes expanded state and outdated status
                 const staticHash = d.name + badges + isExpanded + psData.state + psData.title + psData.artist + isOutdated;

@@ -94,6 +94,24 @@ class SendspinAudioPlayer(
             isPlaying.set(true)
             AppLog.i(TAG, "AudioTrack started with buffer size: $bufferSize")
 
+            // Fast-forward through stale chunks to sync with clock
+            if (clockSync.isSynced()) {
+                var skippedCount = 0
+                while (true) {
+                    val chunk = audioBuffer.peek() ?: break
+                    val delayMicros = clockSync.delayUntilMicros(chunk.timestampMicros)
+                    if (delayMicros >= -500_000) { // Within 500ms - close enough to play
+                        break
+                    }
+                    // Chunk is too old, discard it
+                    audioBuffer.read()
+                    skippedCount++
+                }
+                if (skippedCount > 0) {
+                    AppLog.i(TAG, "Fast-forwarded past $skippedCount stale chunks to sync with clock")
+                }
+            }
+
             // Start playback loop
             playbackJob = scope.launch {
                 playbackLoop()

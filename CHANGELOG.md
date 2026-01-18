@@ -22,6 +22,13 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 
 # Server/Monitor Changelog
 
+## [3.0.4] - 2026-01-18
+
+### Fixed
+- **Outdated device version comparison** - Fixed version comparison to extract version number from "2.0.3 (33)" format before comparing to latest APK version
+
+---
+
 ## [3.0.2] - 2026-01-18
 
 ### Added
@@ -49,6 +56,13 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 ---
 
 # Android APK Changelog
+
+## [2.0.6] - 2026-01-18
+
+### Fixed
+- **Sendspin resume delay** - Fixed playback resume taking 5+ seconds by fast-forwarding through stale audio chunks to sync with clock instead of clearing the entire buffer
+
+---
 
 ## [2.0.3] - 2026-01-18
 
@@ -259,6 +273,7 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 | 3.0.0 | 2026-01-18 | Separate versioning, mDNS auto-resolution, version display |
 | 3.0.1 | 2026-01-18 | Fix ADB operations with mDNS device names |
 | 3.0.2 | 2026-01-18 | Outdated device highlighting in dashboard |
+| 3.0.4 | 2026-01-18 | Fix outdated device version comparison |
 
 ### APK Versions
 
@@ -269,6 +284,7 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 | 2.0.0 | 2026-01-17 | Sendspin multi-room audio protocol support |
 | 2.0.2 | 2026-01-17 | Fix choppy Sendspin audio |
 | 2.0.3 | 2026-01-18 | Fix HTTP server connection leak |
+| 2.0.6 | 2026-01-18 | Fix Sendspin resume delay with fast-forward sync |
 
 ---
 
