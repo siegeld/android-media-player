@@ -22,6 +22,20 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 
 # Server/Monitor Changelog
 
+## [3.0.2] - 2026-01-18
+
+### Added
+- **Outdated device highlighting** - Device cards now show orange-brown background when running an older APK version than the latest available
+
+---
+
+## [3.0.1] - 2026-01-18
+
+### Fixed
+- **ADB operations with mDNS names** - Push Update, Set Device Owner, Disable Play Protect, and Set Tablet Name now auto-resolve mDNS service names to IP:port before executing ADB commands
+
+---
+
 ## [3.0.0] - 2026-01-18
 
 ### Added
@@ -36,17 +50,10 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 
 # Android APK Changelog
 
-## [2.0.4] - 2026-01-18
+## [2.0.3] - 2026-01-18
 
-### Changed
-- **Collapsible device cards** - Device cards in web dashboard are now collapsed by default showing just name, status badges, and playback state. Click +/- to expand for full details and action buttons. Expanded state persists across page refreshes.
-
----
-
-## [2.0.3] - 2026-01-17
-
-### Added
-- **Delete device from web dashboard** - New "Delete" button on each device card to remove devices from tracking and disconnect ADB
+### Fixed
+- **HTTP server connection leak** - Added request/response timeouts to Ktor/Netty server to prevent CLOSE_WAIT socket accumulation. Connections now timeout after 30 seconds of inactivity, preventing the server from becoming unresponsive.
 
 ---
 
@@ -250,6 +257,8 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 | Version | Date | Highlights |
 |---------|------|------------|
 | 3.0.0 | 2026-01-18 | Separate versioning, mDNS auto-resolution, version display |
+| 3.0.1 | 2026-01-18 | Fix ADB operations with mDNS device names |
+| 3.0.2 | 2026-01-18 | Outdated device highlighting in dashboard |
 
 ### APK Versions
 
@@ -258,8 +267,8 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 | 1.0.0 | 2026-01-01 | Initial release with core functionality |
 | 1.9.3 | 2026-01-11 | Android 14 background playback fixes |
 | 2.0.0 | 2026-01-17 | Sendspin multi-room audio protocol support |
-| 2.0.3 | 2026-01-17 | Delete device from web dashboard |
-| 2.0.4 | 2026-01-18 | Collapsible device cards in web dashboard |
+| 2.0.2 | 2026-01-17 | Fix choppy Sendspin audio |
+| 2.0.3 | 2026-01-18 | Fix HTTP server connection leak |
 
 ---
 

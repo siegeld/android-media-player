@@ -59,7 +59,16 @@ class MediaHttpServer(
 
     fun start() {
         AppLog.i(TAG, "Starting HTTP/WebSocket server on port $port for device '$deviceName'")
-        server = embeddedServer(Netty, port = port) {
+        server = embeddedServer(Netty, port = port, configure = {
+            // Connection timeout settings to prevent CLOSE_WAIT socket accumulation
+            connectionGroupSize = 2
+            workerGroupSize = 4
+            callGroupSize = 8
+            // Timeout for reading request (prevents stale connections)
+            requestReadTimeoutSeconds = 30
+            // Timeout for writing response
+            responseWriteTimeoutSeconds = 30
+        }) {
             install(ContentNegotiation) {
                 gson {
                     setPrettyPrinting()

@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 import threading
 
 PORT = 9742
-SERVER_VERSION = "3.0.0"  # Monitor/server version (separate from APK version)
+SERVER_VERSION = "3.0.2"  # Monitor/server version (separate from APK version)
 APK_DIR = Path(__file__).parent / "app/build/outputs/apk/debug"
 APK_PATH = APK_DIR / "app-debug.apk"  # Default path for backwards compatibility
 DATA_DIR = Path(__file__).parent / "data"
@@ -230,6 +230,9 @@ def get_server_ip():
 
 def adb_push_update(device):
     """Push APK update to device via ADB."""
+    # Resolve mDNS name to IP:port if needed
+    device = resolve_adb_address(device)
+
     apk_path, version_code, version_name = get_best_apk()
     if apk_path is None:
         return {"success": False, "message": "APK not found"}
@@ -319,6 +322,7 @@ def get_adb_devices():
 
 def adb_set_device_owner(device):
     """Set app as device owner for silent updates."""
+    device = resolve_adb_address(device)
     # Check for accounts first
     result = run_adb("-s", device, "shell", "dumpsys", "account")
     if "Account {" in result.get("stdout", ""):
@@ -334,6 +338,7 @@ def adb_set_device_owner(device):
 
 def adb_check_device_owner(device):
     """Check if app is device owner."""
+    device = resolve_adb_address(device)
     result = run_adb("-s", device, "shell", "dumpsys", "device_policy")
     is_owner = "Device Owner" in result.get("stdout", "") and PACKAGE in result.get("stdout", "")
     return {"is_device_owner": is_owner}
@@ -341,19 +346,21 @@ def adb_check_device_owner(device):
 
 def adb_disable_play_protect(device):
     """Disable Play Protect verification."""
+    device = resolve_adb_address(device)
     run_adb("-s", device, "shell", "settings", "put", "global", "package_verifier_enable", "0")
     run_adb("-s", device, "shell", "settings", "put", "global", "verifier_verify_adb_installs", "0")
     return {"success": True, "message": "Play Protect disabled"}
 
 
-def resolve_mdns_to_ip(service_name):
+def resolve_mdns_to_ip(service_name, with_port=False):
     """Resolve an mDNS service name to an IP address using avahi-browse.
 
     Args:
         service_name: An mDNS service name like 'adb-SERIAL-random._adb-tls-connect._tcp'
+        with_port: If True, return 'ip:port' string; if False, return just IP
 
     Returns:
-        IP address string or None if resolution fails
+        IP address string (or ip:port if with_port=True), or None if resolution fails
     """
     # Extract the instance name (before the service type)
     # Format: adb-SERIAL-random._adb-tls-connect._tcp
@@ -377,16 +384,41 @@ def resolve_mdns_to_ip(service_name):
         for line in result.stdout.split('\n'):
             if line.startswith('=') and instance_name in line:
                 parts = line.split(';')
-                if len(parts) >= 8:
+                if len(parts) >= 9:
                     ip = parts[7]
+                    port = parts[8]
                     # Validate it looks like an IP
                     if re.match(r'\d+\.\d+\.\d+\.\d+', ip):
+                        if with_port and port:
+                            return f"{ip}:{port}"
                         return ip
 
         return None
     except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
         print(f"avahi-browse failed: {e}")
         return None
+
+
+def resolve_adb_address(device):
+    """Resolve an ADB device address to IP:port if it's an mDNS name.
+
+    Args:
+        device: ADB device address (could be IP:port or mDNS service name)
+
+    Returns:
+        Resolved IP:port or original address if already IP-based
+    """
+    if device.startswith('adb-') or '._adb-tls-connect._tcp' in device:
+        resolved = resolve_mdns_to_ip(device, with_port=True)
+        if resolved:
+            # Try to connect via the resolved address
+            connect_result = run_adb("connect", resolved)
+            if connect_result.get("success") or "already connected" in connect_result.get("stdout", ""):
+                print(f"Resolved {device} to {resolved}")
+                return resolved
+            else:
+                print(f"Failed to connect to resolved address {resolved}: {connect_result}")
+    return device
 
 
 def get_device_app_info(device):
@@ -451,6 +483,7 @@ def set_device_player_name(ip, name):
 
 def adb_set_tablet_name(device, name):
     """Set the tablet device name via ADB (requires device owner or root)."""
+    device = resolve_adb_address(device)
     # Try multiple methods to set device name
     results = []
 
@@ -506,6 +539,7 @@ WEB_UI_HTML = """
         }
         .device-card { border-left: 4px solid #00d4ff; }
         .device-card.offline { border-left-color: #ff6b6b; opacity: 0.7; }
+        .device-card.outdated, .adb-device.outdated, .adb-device.expanded.outdated { background: #2d2416; border-left-color: #f6ad55; }
         .device-name { font-size: 1.3em; font-weight: bold; color: #00d4ff; }
         .device-info { margin-top: 10px; font-size: 0.9em; color: #aaa; }
         .device-info span { display: block; margin: 4px 0; }
@@ -722,6 +756,7 @@ WEB_UI_HTML = """
     <script>
         let allLogs = [];
         let allDevices = [];
+        let latestApkVersion = null;
         let expandedDevices = new Set(JSON.parse(localStorage.getItem('expandedDevices') || '[]'));
 
         function toggleDevice(deviceId) {
@@ -1268,8 +1303,11 @@ WEB_UI_HTML = """
                     miniState = `<span class="device-state-mini">Idle</span>`;
                 }
 
-                // Static hash includes expanded state
-                const staticHash = d.name + badges + isExpanded + psData.state + psData.title + psData.artist;
+                // Check if device is running an older version
+                const isOutdated = latestApkVersion && d.version && d.version !== latestApkVersion;
+
+                // Static hash includes expanded state and outdated status
+                const staticHash = d.name + badges + isExpanded + psData.state + psData.title + psData.artist + isOutdated;
 
                 // Build expanded content
                 const info =
@@ -1305,7 +1343,7 @@ WEB_UI_HTML = """
                         card.id = deviceId;
                         container.appendChild(card);
                     }
-                    card.className = 'adb-device' + (isExpanded ? ' expanded' : '');
+                    card.className = 'adb-device' + (isExpanded ? ' expanded' : '') + (isOutdated ? ' outdated' : '');
                     card.style.cssText = 'flex-direction:column;align-items:stretch;';
                     card.dataset.staticHash = staticHash;
                     const safeName = escapeHtml(d.name);
@@ -1346,10 +1384,14 @@ WEB_UI_HTML = """
                 const resp = await fetch('/version');
                 const data = await resp.json();
                 if (data.available) {
+                    latestApkVersion = data.versionName;
                     document.getElementById('apk-version').textContent = data.versionName;
                     document.getElementById('apk-details').innerHTML =
                         `Version: ${data.versionName} (code ${data.versionCode})<br>Size: ${(data.size / 1024 / 1024).toFixed(2)} MB`;
+                    // Re-render devices to update outdated status
+                    renderDevices();
                 } else {
+                    latestApkVersion = null;
                     document.getElementById('apk-version').textContent = 'N/A';
                     document.getElementById('apk-details').textContent = 'APK not found';
                 }
