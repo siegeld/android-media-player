@@ -294,6 +294,7 @@ adb shell dpm set-device-owner com.example.androidmediaplayer/.receiver.DeviceAd
 Access the monitoring dashboard at `http://<server-ip>:9742/`
 
 **Dashboard Features:**
+- **Collapsible device cards** - Compact view by default; click +/- to expand for details and actions
 - **Unified device view** - Merged view of all devices (ADB + App API)
 - Real-time device status (online/offline, device owner, ADB connected)
 - Version information for each device

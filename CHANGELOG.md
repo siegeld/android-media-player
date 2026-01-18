@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.4] - 2026-01-18
+
+### Changed
+- **Collapsible device cards** - Device cards in web dashboard are now collapsed by default showing just name, status badges, and playback state. Click +/- to expand for full details and action buttons. Expanded state persists across page refreshes.
+
+---
+
 ## [2.0.3] - 2026-01-17
 
 ### Added
@@ -215,6 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 1.9.3 | 2026-01-11 | Android 14 background playback fixes |
 | 2.0.0 | 2026-01-17 | Sendspin multi-room audio protocol support |
 | 2.0.3 | 2026-01-17 | Delete device from web dashboard |
+| 2.0.4 | 2026-01-18 | Collapsible device cards in web dashboard |
 
 ---
 

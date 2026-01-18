@@ -521,7 +521,20 @@ WEB_UI_HTML = """
         .device-actions { margin-top: 15px; display: flex; flex-wrap: wrap; gap: 8px; }
         .adb-devices { margin-top: 20px; }
         .adb-device { background: #0f3460; padding: 10px 15px; border-radius: 8px; margin: 8px 0;
-            display: flex; justify-content: space-between; align-items: center; }
+            display: flex; justify-content: space-between; align-items: center;
+            border-left: 4px solid #333; transition: border-color 0.2s, background 0.2s; }
+        .adb-device.expanded { border-left-color: #00d4ff; background: #0f3460; }
+        .device-header { display: flex; align-items: flex-start; cursor: pointer; }
+        .device-header:hover { opacity: 0.85; }
+        .expand-btn { background: #1a3a5c; border: none; color: #aaa; font-size: 1em; cursor: pointer;
+            padding: 4px 10px; border-radius: 4px; margin-right: 10px; }
+        .expand-btn:hover { color: #00d4ff; background: #234; }
+        .device-summary { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+        .device-state-mini { font-size: 0.85em; color: #888; max-width: 200px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+        .device-state-mini.playing { color: #48bb78; }
+        .device-state-mini.paused { color: #ecc94b; }
+        .device-details { margin-top: 12px; padding-top: 12px; border-top: 1px solid #1a3a5c; }
         .toast { position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px;
             background: #48bb78; color: #fff; z-index: 2000; display: none; }
         .toast.error { background: #f56565; }
@@ -654,6 +667,17 @@ WEB_UI_HTML = """
     <script>
         let allLogs = [];
         let allDevices = [];
+        let expandedDevices = new Set(JSON.parse(localStorage.getItem('expandedDevices') || '[]'));
+
+        function toggleDevice(deviceId) {
+            if (expandedDevices.has(deviceId)) {
+                expandedDevices.delete(deviceId);
+            } else {
+                expandedDevices.add(deviceId);
+            }
+            localStorage.setItem('expandedDevices', JSON.stringify([...expandedDevices]));
+            renderDevices();
+        }
 
         function showToast(msg, isError = false) {
             const toast = document.getElementById('toast');
@@ -1162,74 +1186,84 @@ WEB_UI_HTML = """
             allDevices.forEach(d => {
                 const deviceId = 'device-' + (d.ip || d.name).replace(/[^a-zA-Z0-9]/g, '-');
                 seenIds.add(deviceId);
+                const isExpanded = expandedDevices.has(deviceId);
 
                 let card = document.getElementById(deviceId);
                 const isOnline = d.player_state || (d.app_connected && d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 300000);
 
-                // Build static content hash (excludes player state time/position)
+                // Build badges
                 const badges =
                     (d.is_device_owner ? '<span class="status-badge status-owner">Silent Updates</span>' : '') +
                     (isOnline ? '<span class="status-badge status-online">Online</span>' : '') +
                     (d.adb_connected ? '<span class="status-badge" style="background:#4fc3f733;color:#4fc3f7;">ADB</span>' : '');
+
+                // Mini state for collapsed view
+                const psData = getPlayerStateData(d.player_state);
+                const escapeHtml = (s) => s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
+                const safeTitle = escapeHtml(psData.title);
+                let miniState = '';
+                if (psData.state === 'playing' && psData.title) {
+                    miniState = `<span class="device-state-mini playing" title="${safeTitle}">${safeTitle}</span>`;
+                } else if (psData.state === 'paused' && psData.title) {
+                    miniState = `<span class="device-state-mini paused" title="${safeTitle}">${safeTitle}</span>`;
+                } else if (psData.state === 'buffering') {
+                    miniState = `<span class="device-state-mini">Buffering...</span>`;
+                } else {
+                    miniState = `<span class="device-state-mini">Idle</span>`;
+                }
+
+                // Static hash includes expanded state
+                const staticHash = d.name + badges + isExpanded + psData.state + psData.title + psData.artist;
+
+                // Build expanded content
                 const info =
                     (d.ip ? 'IP: ' + d.ip + ':8765' : '') +
                     (d.version ? ' | Version: ' + d.version : '') +
                     (d.adb_address && d.adb_address !== d.ip + ':41297' ? ' | ADB: ' + d.adb_address : '');
                 const isPlaying = d.player_state && d.player_state.state === 'playing';
                 const isPaused = d.player_state && d.player_state.state === 'paused';
-                const settingsBtn = `<button class="btn btn-small btn-secondary" onclick="showSettingsModal('${(d.name || '').replace(/'/g, "\\'")}', '${d.ip || ''}', '${d.adb_address || ''}')" title="Edit device name">Edit Name</button>`;
-                const deleteBtn = `<button class="btn btn-small btn-danger" onclick="deleteDevice('${(d.name || '').replace(/'/g, "\\'")}', '${d.ip || ''}', '${d.adb_address || ''}')" title="Remove device">Delete</button>`;
+                const settingsBtn = `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation();showSettingsModal('${(d.name || '').replace(/'/g, "\\'")}', '${d.ip || ''}', '${d.adb_address || ''}')" title="Edit device name">Edit Name</button>`;
+                const deleteBtn = `<button class="btn btn-small btn-danger" onclick="event.stopPropagation();deleteDevice('${(d.name || '').replace(/'/g, "\\'")}', '${d.ip || ''}', '${d.adb_address || ''}')" title="Remove device">Delete</button>`;
                 const buttons =
                     settingsBtn +
-                    (d.ip ? `<button class="btn btn-small" onclick="playTestStream('${d.ip}')">Test Stream</button>` : '') +
-                    (d.ip && isPlaying ? `<button class="btn btn-small btn-secondary" onclick="pausePlayback('${d.ip}')">Pause</button>` : '') +
-                    (d.ip && isPaused ? `<button class="btn btn-small btn-success" onclick="resumePlayback('${d.ip}')">Play</button>` : '') +
-                    (d.ip ? `<button class="btn btn-small btn-danger" onclick="stopPlayback('${d.ip}')">Stop</button>` : '') +
-                    (d.adb_connected ? `<button class="btn btn-small" onclick="pushUpdate('${d.adb_address}')">Push Update (ADB)</button>` : '') +
-                    (d.is_device_owner && d.ip ? `<button class="btn btn-small btn-success" onclick="triggerOtaUpdate('${d.ip}')">OTA Update</button>` : '') +
-                    (d.adb_connected && !d.is_device_owner ? `<button class="btn btn-small btn-secondary" onclick="setDeviceOwner('${d.adb_address}')">Enable Silent Updates</button>` : '') +
-                    (d.adb_connected ? `<button class="btn btn-small btn-secondary" onclick="disablePlayProtect('${d.adb_address}')">Disable Protect</button>` : '') +
+                    (d.ip ? `<button class="btn btn-small" onclick="event.stopPropagation();playTestStream('${d.ip}')">Test Stream</button>` : '') +
+                    (d.ip && isPlaying ? `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation();pausePlayback('${d.ip}')">Pause</button>` : '') +
+                    (d.ip && isPaused ? `<button class="btn btn-small btn-success" onclick="event.stopPropagation();resumePlayback('${d.ip}')">Play</button>` : '') +
+                    (d.ip ? `<button class="btn btn-small btn-danger" onclick="event.stopPropagation();stopPlayback('${d.ip}')">Stop</button>` : '') +
+                    (d.adb_connected ? `<button class="btn btn-small" onclick="event.stopPropagation();pushUpdate('${d.adb_address}')">Push Update</button>` : '') +
+                    (d.is_device_owner && d.ip ? `<button class="btn btn-small btn-success" onclick="event.stopPropagation();triggerOtaUpdate('${d.ip}')">OTA Update</button>` : '') +
+                    (d.adb_connected && !d.is_device_owner ? `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation();setDeviceOwner('${d.adb_address}')">Silent Updates</button>` : '') +
+                    (d.adb_connected ? `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation();disablePlayProtect('${d.adb_address}')">Disable Protect</button>` : '') +
                     deleteBtn;
 
-                // Static hash includes play state for button updates
-                const psData = getPlayerStateData(d.player_state);
-                const staticHash = d.name + badges + info + isPlaying + isPaused + psData.state + psData.title + psData.artist;
+                const expandedContent = isExpanded ? `
+                    <div class="device-details">
+                        <div style="font-size:0.85em;color:#888;margin-bottom:10px;">${info}</div>
+                        ${renderPlayerState(d.player_state)}
+                        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">${buttons}</div>
+                    </div>` : '';
 
-                console.log('renderDevices:', {deviceId, name: d.name, oldHash: card?.dataset?.staticHash, newHash: staticHash, willUpdate: card ? card.dataset.staticHash !== staticHash : 'new'});
-
-                if (!card) {
-                    // Create new card
-                    card = document.createElement('div');
-                    card.id = deviceId;
-                    card.className = 'adb-device';
+                if (!card || card.dataset.staticHash !== staticHash) {
+                    if (!card) {
+                        card = document.createElement('div');
+                        card.id = deviceId;
+                        container.appendChild(card);
+                    }
+                    card.className = 'adb-device' + (isExpanded ? ' expanded' : '');
                     card.style.cssText = 'flex-direction:column;align-items:stretch;';
                     card.dataset.staticHash = staticHash;
+                    const safeName = escapeHtml(d.name);
                     card.innerHTML = `
-                        <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <div>
-                                <strong style="font-size:1.1em;">${d.name}</strong>
-                                ${badges}
+                        <div class="device-header" onclick="toggleDevice('${deviceId}')">
+                            <button class="expand-btn">${isExpanded ? '-' : '+'}</button>
+                            <div class="device-summary">
+                                <div><strong style="font-size:1.1em;">${safeName}</strong> ${badges}</div>
+                                <div>${miniState}</div>
                             </div>
                         </div>
-                        <div style="font-size:0.85em;color:#888;margin:8px 0;">${info}</div>
-                        ${renderPlayerState(d.player_state)}
-                        <div style="display:flex;flex-wrap:wrap;gap:6px;">${buttons}</div>`;
-                    container.appendChild(card);
-                } else if (card.dataset.staticHash !== staticHash) {
-                    // Static content changed - rebuild card
-                    card.dataset.staticHash = staticHash;
-                    card.innerHTML = `
-                        <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <div>
-                                <strong style="font-size:1.1em;">${d.name}</strong>
-                                ${badges}
-                            </div>
-                        </div>
-                        <div style="font-size:0.85em;color:#888;margin:8px 0;">${info}</div>
-                        ${renderPlayerState(d.player_state)}
-                        <div style="display:flex;flex-wrap:wrap;gap:6px;">${buttons}</div>`;
-                } else {
-                    // Only player state time/volume changed - update in place
+                        ${expandedContent}`;
+                } else if (isExpanded) {
+                    // Update player state in place for expanded cards
                     updatePlayerStateInPlace(card, d.player_state);
                 }
             });
