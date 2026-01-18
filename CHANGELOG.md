@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.3] - 2026-01-17
+
+### Added
+- **Delete device from web dashboard** - New "Delete" button on each device card to remove devices from tracking and disconnect ADB
+
+---
+
 ## [2.0.2] - 2026-01-17
 
 ### Fixed
@@ -207,6 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 1.0.0 | 2026-01-01 | Initial release with core functionality |
 | 1.9.3 | 2026-01-11 | Android 14 background playback fixes |
 | 2.0.0 | 2026-01-17 | Sendspin multi-room audio protocol support |
+| 2.0.3 | 2026-01-17 | Delete device from web dashboard |
 
 ---
 

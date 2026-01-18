@@ -136,6 +136,41 @@ def update_device(device_id, info):
         devices[device_id]["last_seen"] = datetime.now().isoformat()
 
 
+def delete_device(ip=None, adb_address=None):
+    """Delete a device from tracking. Removes from both devices and adb_devices dicts."""
+    removed = {"app_devices": [], "adb_devices": []}
+
+    with data_lock:
+        # Remove from app devices by IP
+        if ip:
+            to_remove = [did for did, d in devices.items() if d.get('ip_address') == ip]
+            for did in to_remove:
+                del devices[did]
+                removed["app_devices"].append(did)
+
+        # Remove from adb_devices
+        if adb_address and adb_address in adb_devices:
+            del adb_devices[adb_address]
+            removed["adb_devices"].append(adb_address)
+
+        # Also try to find adb_device by IP
+        if ip:
+            to_remove_adb = [addr for addr in adb_devices if addr.startswith(f"{ip}:")]
+            for addr in to_remove_adb:
+                del adb_devices[addr]
+                removed["adb_devices"].append(addr)
+
+    # Disconnect from ADB if connected
+    if adb_address:
+        run_adb("disconnect", adb_address, timeout=5)
+    elif ip:
+        # Try common ADB ports
+        run_adb("disconnect", f"{ip}:5555", timeout=5)
+        run_adb("disconnect", f"{ip}:41297", timeout=5)
+
+    return removed
+
+
 def run_adb(*args, timeout=30):
     """Run an ADB command and return result."""
     adb = str(ADB_PATH) if ADB_PATH.exists() else "adb"
@@ -913,6 +948,27 @@ WEB_UI_HTML = """
             }
         }
 
+        async function deleteDevice(name, ip, adbAddress) {
+            if (!confirm(`Delete "${name}" from the devices list?\\n\\nThis will remove the device from tracking and disconnect ADB if connected.`)) return;
+            showToast('Removing device...');
+            try {
+                const resp = await fetch('/api/delete-device', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ip: ip, adb_address: adbAddress})
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showToast('Device removed');
+                    fetchAllDevices();
+                } else {
+                    showToast(result.message || 'Failed to remove device', true);
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, true);
+            }
+        }
+
         async function fetchPlayerState(ip) {
             try {
                 const resp = await fetch(`/api/player-state/${ip}`);
@@ -1122,6 +1178,7 @@ WEB_UI_HTML = """
                 const isPlaying = d.player_state && d.player_state.state === 'playing';
                 const isPaused = d.player_state && d.player_state.state === 'paused';
                 const settingsBtn = `<button class="btn btn-small btn-secondary" onclick="showSettingsModal('${(d.name || '').replace(/'/g, "\\'")}', '${d.ip || ''}', '${d.adb_address || ''}')" title="Edit device name">Edit Name</button>`;
+                const deleteBtn = `<button class="btn btn-small btn-danger" onclick="deleteDevice('${(d.name || '').replace(/'/g, "\\'")}', '${d.ip || ''}', '${d.adb_address || ''}')" title="Remove device">Delete</button>`;
                 const buttons =
                     settingsBtn +
                     (d.ip ? `<button class="btn btn-small" onclick="playTestStream('${d.ip}')">Test Stream</button>` : '') +
@@ -1131,7 +1188,8 @@ WEB_UI_HTML = """
                     (d.adb_connected ? `<button class="btn btn-small" onclick="pushUpdate('${d.adb_address}')">Push Update (ADB)</button>` : '') +
                     (d.is_device_owner && d.ip ? `<button class="btn btn-small btn-success" onclick="triggerOtaUpdate('${d.ip}')">OTA Update</button>` : '') +
                     (d.adb_connected && !d.is_device_owner ? `<button class="btn btn-small btn-secondary" onclick="setDeviceOwner('${d.adb_address}')">Enable Silent Updates</button>` : '') +
-                    (d.adb_connected ? `<button class="btn btn-small btn-secondary" onclick="disablePlayProtect('${d.adb_address}')">Disable Protect</button>` : '');
+                    (d.adb_connected ? `<button class="btn btn-small btn-secondary" onclick="disablePlayProtect('${d.adb_address}')">Disable Protect</button>` : '') +
+                    deleteBtn;
 
                 // Static hash includes play state for button updates
                 const psData = getPlayerStateData(d.player_state);
@@ -1320,6 +1378,8 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
             self.handle_set_player_name()
         elif self.path == "/api/set-tablet-name":
             self.handle_set_tablet_name()
+        elif self.path == "/api/delete-device":
+            self.handle_delete_device()
         else:
             self.send_error(404, "Not Found")
 
@@ -1716,6 +1776,32 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(400, "Missing 'device' or 'name' parameter")
                 return
             result = adb_set_tablet_name(device, name)
+            body = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            self.send_error(400, str(e))
+
+    def handle_delete_device(self):
+        """Delete a device from tracking."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode()
+            data = json.loads(body)
+            ip = data.get('ip')
+            adb_address = data.get('adb_address')
+            if not ip and not adb_address:
+                self.send_error(400, "Missing 'ip' or 'adb_address' parameter")
+                return
+            removed = delete_device(ip=ip, adb_address=adb_address)
+            result = {
+                "success": True,
+                "message": "Device removed",
+                "removed": removed
+            }
             body = json.dumps(result).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

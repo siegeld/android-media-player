@@ -308,6 +308,7 @@ Access the monitoring dashboard at `http://<server-ip>:9742/`
 | OTA Update | Trigger app to download and install update |
 | Enable Silent Updates | Set Device Owner mode (requires no Google accounts) |
 | Disable Protect | Disable Play Protect verification |
+| Delete | Remove device from tracking and disconnect ADB |
 
 **Renaming Devices:**
 
