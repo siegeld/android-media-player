@@ -6,6 +6,8 @@ An Android app that exposes itself as a Home Assistant media player entity, allo
 [![Android](https://img.shields.io/badge/Android-10%2B-green.svg)](https://developer.android.com)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2023.1%2B-blue.svg)](https://www.home-assistant.io/)
 
+**Versions:** Server/Monitor 3.x | APK 2.x (see [CHANGELOG.md](CHANGELOG.md) for details)
+
 ---
 
 ## Table of Contents
@@ -296,6 +298,7 @@ Access the monitoring dashboard at `http://<server-ip>:9742/`
 **Dashboard Features:**
 - **Collapsible device cards** - Compact view by default; click +/- to expand for details and actions
 - **Unified device view** - Merged view of all devices (ADB + App API)
+- **mDNS auto-resolution** - Devices discovered via Android Wireless Debugging automatically resolve to IP addresses
 - Real-time device status (online/offline, device owner, ADB connected)
 - Version information for each device
 - Live log streaming with filtering

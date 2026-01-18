@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 import threading
 
 PORT = 9742
+SERVER_VERSION = "3.0.0"  # Monitor/server version (separate from APK version)
 APK_DIR = Path(__file__).parent / "app/build/outputs/apk/debug"
 APK_PATH = APK_DIR / "app-debug.apk"  # Default path for backwards compatibility
 DATA_DIR = Path(__file__).parent / "data"
@@ -345,6 +346,49 @@ def adb_disable_play_protect(device):
     return {"success": True, "message": "Play Protect disabled"}
 
 
+def resolve_mdns_to_ip(service_name):
+    """Resolve an mDNS service name to an IP address using avahi-browse.
+
+    Args:
+        service_name: An mDNS service name like 'adb-SERIAL-random._adb-tls-connect._tcp'
+
+    Returns:
+        IP address string or None if resolution fails
+    """
+    # Extract the instance name (before the service type)
+    # Format: adb-SERIAL-random._adb-tls-connect._tcp
+    if '._adb-tls-connect._tcp' in service_name:
+        instance_name = service_name.replace('._adb-tls-connect._tcp', '')
+    else:
+        instance_name = service_name
+
+    try:
+        # Use avahi-browse to find all ADB TLS services and their IPs
+        result = subprocess.run(
+            ['avahi-browse', '-rpt', '_adb-tls-connect._tcp'],
+            capture_output=True, text=True, timeout=5
+        )
+
+        if result.returncode != 0:
+            return None
+
+        # Parse output - look for resolved lines (starting with '=')
+        # Format: =;interface;protocol;name;type;domain;hostname;address;port;txt
+        for line in result.stdout.split('\n'):
+            if line.startswith('=') and instance_name in line:
+                parts = line.split(';')
+                if len(parts) >= 8:
+                    ip = parts[7]
+                    # Validate it looks like an IP
+                    if re.match(r'\d+\.\d+\.\d+\.\d+', ip):
+                        return ip
+
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+        print(f"avahi-browse failed: {e}")
+        return None
+
+
 def get_device_app_info(device):
     """Get the device name and version from the app's API."""
     import urllib.request
@@ -353,21 +397,28 @@ def get_device_app_info(device):
         if ':' in device and not device.startswith('adb-'):
             ip = device.split(':')[0]
         else:
-            # For mDNS, try to get IP via adb
+            ip = None
+
+            # For mDNS, try to get IP via adb shell first
             result = run_adb("-s", device, "shell", "ip", "route", "get", "1")
             match = re.search(r'src\s+(\d+\.\d+\.\d+\.\d+)', result.get("stdout", ""))
             if match:
                 ip = match.group(1)
-            else:
-                return None, None
+
+            # Fallback: try avahi-browse to resolve mDNS service name
+            if not ip:
+                ip = resolve_mdns_to_ip(device)
+
+            if not ip:
+                return None, None, None
 
         url = f"http://{ip}:8765/"
         req = urllib.request.Request(url, headers={'User-Agent': 'UpdateServer'})
         with urllib.request.urlopen(req, timeout=2) as resp:
             data = json.loads(resp.read().decode())
-            return data.get("name"), data.get("version")
+            return data.get("name"), data.get("version"), ip
     except Exception:
-        return None, None
+        return None, None, None
 
 
 def get_device_player_state(ip):
@@ -436,7 +487,7 @@ WEB_UI_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Android Media Player Monitor</title>
+    <title>Android Media Player Monitor v{{SERVER_VERSION}}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -543,7 +594,7 @@ WEB_UI_HTML = """
 </head>
 <body>
     <div class="container">
-        <h1>Android Media Player Monitor</h1>
+        <h1>Android Media Player Monitor <span style="font-size:0.5em;color:#888;">v{{SERVER_VERSION}}</span></h1>
 
         <div class="stats" id="stats">
             <div class="stat-box">
@@ -555,8 +606,12 @@ WEB_UI_HTML = """
                 <div class="stat-label">Log Entries</div>
             </div>
             <div class="stat-box">
+                <div class="stat-value">{{SERVER_VERSION}}</div>
+                <div class="stat-label">Server Version</div>
+            </div>
+            <div class="stat-box">
                 <div class="stat-value" id="apk-version">-</div>
-                <div class="stat-label">Latest APK</div>
+                <div class="stat-label">APK Version</div>
             </div>
         </div>
 
@@ -1021,8 +1076,9 @@ WEB_UI_HTML = """
                 // Merge by IP address
                 const merged = {};
                 for (const d of adbDevices) {
-                    const ip = d.address.includes(':') && !d.address.startsWith('adb-')
-                        ? d.address.split(':')[0] : null;
+                    // Use resolved_ip from avahi if available, otherwise extract from address
+                    const ip = d.resolved_ip || (d.address.includes(':') && !d.address.startsWith('adb-')
+                        ? d.address.split(':')[0] : null);
                     const key = ip || d.serial || d.address;
                     merged[key] = {
                         name: d.name || d.model || d.address,
@@ -1419,7 +1475,8 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
 
     def handle_web_ui(self):
         """Serve the web UI."""
-        body = WEB_UI_HTML.encode()
+        html = WEB_UI_HTML.replace("{{SERVER_VERSION}}", SERVER_VERSION)
+        body = html.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", len(body))
@@ -1671,14 +1728,17 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
             owner_info = adb_check_device_owner(addr)
             d['is_device_owner'] = owner_info.get('is_device_owner', False)
 
-            # Get app name and version
-            app_name, app_version = get_device_app_info(addr)
+            # Get app name, version, and resolved IP
+            app_name, app_version, resolved_ip = get_device_app_info(addr)
             if app_name:
                 d['name'] = app_name
             else:
                 d['name'] = d.get('model', addr)
             if app_version:
                 d['version'] = app_version
+            # If we resolved an mDNS name to IP, include it in the response
+            if resolved_ip and addr.startswith('adb-'):
+                d['resolved_ip'] = resolved_ip
 
             d['serial'] = serial
             if serial:

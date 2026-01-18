@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## Versioning
+
+This project has **two separate version numbers**:
+
+| Component | Current | Description |
+|-----------|---------|-------------|
+| **Server/Monitor** | 3.x.x | Update server, web dashboard, Docker container |
+| **Android APK** | 2.x.x | Android app installed on tablets |
+
+Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked separately in `app/build.gradle.kts`.
+
+---
+
+# Server/Monitor Changelog
+
+## [3.0.0] - 2026-01-18
+
+### Added
+- **Server version display** - Web dashboard now shows server version in header and stats
+- **mDNS auto-resolution for ADB devices** - Automatically resolves mDNS service names (like `adb-SERIAL-random._adb-tls-connect._tcp`) to IP addresses using avahi-browse
+
+### Changed
+- **Separate versioning scheme** - Server/Monitor now versioned independently from APK
+- **Docker container includes avahi-utils** - Added avahi-utils package and D-Bus socket mount for mDNS resolution
+
+---
+
+# Android APK Changelog
+
 ## [2.0.4] - 2026-01-18
 
 ### Changed
@@ -215,6 +244,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## Version History Summary
+
+### Server/Monitor Versions
+
+| Version | Date | Highlights |
+|---------|------|------------|
+| 3.0.0 | 2026-01-18 | Separate versioning, mDNS auto-resolution, version display |
+
+### APK Versions
 
 | Version | Date | Highlights |
 |---------|------|------------|
