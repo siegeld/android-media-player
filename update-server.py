@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 import threading
 
 PORT = 9742
-SERVER_VERSION = "3.0.4"  # Monitor/server version (separate from APK version)
+SERVER_VERSION = "3.0.5"  # Monitor/server version (separate from APK version)
 APK_DIR = Path(__file__).parent / "app/build/outputs/apk/debug"
 APK_PATH = APK_DIR / "app-debug.apk"  # Default path for backwards compatibility
 DATA_DIR = Path(__file__).parent / "data"

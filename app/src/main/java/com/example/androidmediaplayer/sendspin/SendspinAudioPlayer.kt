@@ -21,6 +21,7 @@ class SendspinAudioPlayer(
         private const val TAG = "SendspinAudioPlayer"
         private const val BUFFER_SIZE_FACTOR = 6 // Multiple of minimum buffer size
         private const val SYNC_THRESHOLD_MICROS = 50_000L // 50ms sync threshold
+        private const val PRE_BUFFER_TIMEOUT_MS = 5000L // Max wait for pre-buffering
     }
 
     private var audioTrack: AudioTrack? = null
@@ -89,6 +90,19 @@ class SendspinAudioPlayer(
                 .setBufferSizeInBytes(bufferSize)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
+
+            // Pre-buffer: wait until we have enough data to fill the AudioTrack buffer
+            // This prevents underruns at startup while timestamp sync handles playback timing
+            val minPreBuffer = bufferSize
+            val startWait = System.currentTimeMillis()
+            while (audioBuffer.sizeBytes() < minPreBuffer) {
+                if (System.currentTimeMillis() - startWait > PRE_BUFFER_TIMEOUT_MS) {
+                    AppLog.w(TAG, "Pre-buffer timeout, starting with ${audioBuffer.sizeBytes()} bytes")
+                    break
+                }
+                Thread.sleep(10)
+            }
+            AppLog.i(TAG, "Pre-buffered ${audioBuffer.sizeBytes()} bytes (target: $minPreBuffer)")
 
             audioTrack?.play()
             isPlaying.set(true)

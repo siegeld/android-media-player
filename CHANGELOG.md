@@ -22,6 +22,13 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 
 # Server/Monitor Changelog
 
+## [3.0.5] - 2026-01-18
+
+### Changed
+- Version bump for APK v2.0.7 release (Sendspin pre-buffering fix)
+
+---
+
 ## [3.0.4] - 2026-01-18
 
 ### Fixed
@@ -56,6 +63,13 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 ---
 
 # Android APK Changelog
+
+## [2.0.7] - 2026-01-18
+
+### Fixed
+- **Sendspin initial buffering** - Added pre-buffering before starting AudioTrack playback to prevent choppy audio when starting a new song. Waits for enough data to fill the AudioTrack buffer before playing, while timestamp sync keeps it aligned with other players.
+
+---
 
 ## [2.0.6] - 2026-01-18
 
