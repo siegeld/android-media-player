@@ -19,6 +19,8 @@ services:
       - ./android-sdk/keys:/root/.android:rw
       # Persist logs and state data
       - server-data:/app/data
+      # VERSION as the single source of truth for /healthz + the UI version.
+      - ./VERSION:/app/VERSION:ro
       # Mount D-Bus socket for avahi-browse mDNS resolution
       - /var/run/dbus:/var/run/dbus:ro
     environment:

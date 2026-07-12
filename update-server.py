@@ -27,7 +27,18 @@ import threading
 import urllib.request
 
 PORT = 9742
-SERVER_VERSION = "3.1.0"  # Monitor/server version (separate from APK version)
+
+
+def _read_version() -> str:
+    """Monitor/server version — from the VERSION file (single source of truth;
+    homelab-app-standard §14). Mounted at /app/VERSION so a bump needs no rebuild."""
+    try:
+        return (Path(__file__).resolve().parent / "VERSION").read_text().strip()
+    except OSError:
+        return "0.0.0-dev"
+
+
+SERVER_VERSION = _read_version()  # Monitor/server version (separate from APK version)
 APK_DIR = Path(__file__).parent / "app/build/outputs/apk/debug"
 APK_PATH = APK_DIR / "app-debug.apk"  # Default path for backwards compatibility
 DATA_DIR = Path(__file__).parent / "data"
@@ -2257,7 +2268,9 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path == "/version":
+        if path == "/healthz":
+            self.handle_healthz()
+        elif path == "/version":
             self.handle_version()
         elif path == "/apk" or path == "/update.apk":
             self.handle_apk()
@@ -2313,6 +2326,15 @@ class UpdateHandler(http.server.BaseHTTPRequestHandler):
         body = html.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", len(body))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_healthz(self):
+        """Liveness + version for the Homepage dashboard's badge (§14)."""
+        body = json.dumps({"status": "ok", "version": SERVER_VERSION}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(body))
         self.end_headers()
         self.wfile.write(body)

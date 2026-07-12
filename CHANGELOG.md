@@ -22,6 +22,16 @@ Git tags use the **Server version** (e.g., `v3.0.0`). APK versions are tracked s
 
 # Server/Monitor Changelog
 
+## [3.1.1] - 2026-07-12
+
+### Added
+- **`/healthz` version badge + standard `Makefile`.** New `GET /healthz` →
+  `{status,version}` so the Homepage dashboard shows the monitor's live version
+  on the Android Media Player tile (§14). `SERVER_VERSION` now reads the
+  `VERSION` file (mounted at `/app/VERSION`, single source of truth) instead of
+  a hard-coded string. Added the standard `Makefile` (uniform verbs, semver
+  image tags).
+
 ## [3.1.0] - 2026-04-26
 
 ### Changed
