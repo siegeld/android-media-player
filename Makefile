@@ -67,5 +67,6 @@ release:
 	@$(MAKE) build
 	@git add VERSION CHANGELOG.md
 	@git commit -m "release: v$(V)"
+	@$(MAKE) tag-images
 	@git tag -a "v$(V)" -m "v$(V)"
 	@$(MAKE) push
