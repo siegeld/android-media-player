@@ -15,7 +15,7 @@ BE_PORT := 9742
 VERSION := $(shell cat VERSION 2>/dev/null || echo 0.0.0)
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo nogit)
 
-.PHONY: help up up-build down build tag-images pull restart logs ps status \
+.PHONY: help up up-build down build build-only tag-images pull restart logs ps status \
 	clean health version push release
 
 help:
@@ -31,6 +31,13 @@ up-build:                                     ## rebuild + start, then tag image
 	docker compose up -d --build
 	@$(MAKE) tag-images
 down:          ; docker compose down
+# Compile WITHOUT stamping tags. `release` uses this: it builds before it
+# commits (fail-fast), so at build time GIT_SHA is still the PREVIOUS commit
+# and stamping :<sha> there would name the wrong commit — and clobber the
+# previous release's tag. release stamps once, after the commit, via
+# tag-images. Plain `make build` still builds AND tags.
+build-only:
+	docker compose build
 build:                                        ## build image, then tag it
 	docker compose build
 	@$(MAKE) tag-images
@@ -64,7 +71,7 @@ push:
 release:
 	@if [ -z "$(V)" ]; then echo "usage: make release V=X.Y.Z"; exit 1; fi
 	@echo "$(V)" > VERSION
-	@$(MAKE) build
+	@$(MAKE) build-only
 	@git add VERSION CHANGELOG.md
 	@git commit -m "release: v$(V)"
 	@$(MAKE) tag-images
